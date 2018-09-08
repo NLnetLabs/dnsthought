@@ -64,7 +64,7 @@ int parse_dnsts(uint8_t *buf, size_t sz, int msm_id)
 
 		if (d->error)
 			error_dnst(msm_id, d, d->prb_id, addr_str, time_str, d->rt
-			                    , d->len, dnst_msg(d));
+			                    , d->len, (char *)dnst_msg(d));
 
 		else if ((r = getdns_wire2msg_dict(dnst_msg(d), d->len, &msg))) {
 			const char *err_msg = getdns_get_errorstr_by_id(r);

@@ -1,4 +1,5 @@
-CFLAGS += -Ofast
+CFLAGS += -Ofast -I/usr/local/include
+LDFLAGS += -L/usr/local/lib
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
 	LDFLAGS += -lbsd
@@ -22,7 +23,7 @@ parse_dnst.o: parse_dnst.c
 	$(CC) $(CFLAGS) -c $<
 
 parse_dnst: parse_dnst.o
-	$(CC) $(CFLAGS) -o $@ parse_dnst.o $(LDFLAGS) -lgetdns
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ parse_dnst.o $(LDFLAGS) -lgetdns
 
 clean:
 	rm -f jsmn.o rbtree.o atlas2dnst.o atlas2dnst parse_dnst.o parse_dnst

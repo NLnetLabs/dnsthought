@@ -123,6 +123,8 @@ size_t skip_object(jsmntok_t *t, size_t count) {
 		                  break;
 		case JSMN_ARRAY : i += skip_array(&t[i+1], t[i].size);
 		                  break;
+		default         : assert(  t[i].type == JSMN_OBJECT
+		                        || t[i].type == JSMN_ARRAY );
 		}
 	}
 	return i;
@@ -138,6 +140,8 @@ size_t skip_array(jsmntok_t *t, size_t count) {
 		                  break;
 		case JSMN_ARRAY : i += skip_array(&t[i+1], t[i].size);
 		                  break;
+		default         : assert(  t[i].type == JSMN_OBJECT
+		                        || t[i].type == JSMN_ARRAY );
 		}
 	}
 	return i;
@@ -179,6 +183,8 @@ size_t parse_result(jsmntok_t *t, size_t count) {
 		                  break;
 		case JSMN_ARRAY : i += skip_array(&t[i+1], t[i].size);
 		                  break;
+		default         : assert(  t[i].type == JSMN_OBJECT
+		                        || t[i].type == JSMN_ARRAY );
 		}
 	}
 	return i;
@@ -234,20 +240,20 @@ size_t parse_resultset(jsmntok_t *t, size_t count) {
 
 			i += 1;
 			assert(t[i].type == JSMN_STRING);
-			if (dcur->af != -1)
+			if (dcur->af != 0)
 				continue;
 
 			dcur->af =
 			    memchr(j + t[i].start, ':', t[i].end - t[i].start)
 			  ? AF_INET6 : AF_INET;
 			if (t[i].end - t[i].start >= sizeof(buf) - 1) {
-				dcur->af = -1;
+				dcur->af = 0;
 				continue;
 			}
 			memcpy(buf, j + t[i].start, t[i].end - t[i].start);
 			buf[t[i].end - t[i].start] = '\0';
 			if (inet_pton(dcur->af, buf, dcur->afu.ipv6.addr) != 1)
-				dcur->af = -1;
+				dcur->af = 0;
 
 		} else if (t[i].end - t[i].start == 5 &&
 		    strncmp(j + t[i].start, "error", 5) == 0) {
@@ -269,6 +275,8 @@ size_t parse_resultset(jsmntok_t *t, size_t count) {
 		                  break;
 		case JSMN_ARRAY : i += skip_array(&t[i+1], t[i].size);
 		                  break;
+		default         : assert(  t[i].type == JSMN_OBJECT
+		                        || t[i].type == JSMN_ARRAY );
 		}
 	}
 	dcur->len = dcur->error == 0 ? msg_len * 3 / 4
@@ -342,7 +350,7 @@ void handle_msm(const char *json, jsmntok_t *t, size_t r)
 				i += 1;
 				assert(t[i].type == JSMN_OBJECT);
 				i += parse_resultset(&t[i+1], t[i].size);
-				if (dcur->af == -1 || dcur->error == 2)
+				if (dcur->af == 0 || dcur->error == 2)
 					continue;
 
 				uint8_t *dcur_p = (uint8_t *)dcur;
@@ -358,6 +366,8 @@ void handle_msm(const char *json, jsmntok_t *t, size_t r)
 		                  break;
 		case JSMN_ARRAY : i += skip_array(&t[i+1], t[i].size);
 		                  break;
+		default         : assert(  t[i].type == JSMN_OBJECT
+		                        || t[i].type == JSMN_ARRAY );
 		}
 	}
 	if (prb_id >= 0 && dcur > d1st) {
