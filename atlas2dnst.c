@@ -123,8 +123,7 @@ size_t skip_object(jsmntok_t *t, size_t count) {
 		                  break;
 		case JSMN_ARRAY : i += skip_array(&t[i+1], t[i].size);
 		                  break;
-		default         : assert(  t[i].type == JSMN_OBJECT
-		                        || t[i].type == JSMN_ARRAY );
+		default         : break;
 		}
 	}
 	return i;
@@ -140,8 +139,7 @@ size_t skip_array(jsmntok_t *t, size_t count) {
 		                  break;
 		case JSMN_ARRAY : i += skip_array(&t[i+1], t[i].size);
 		                  break;
-		default         : assert(  t[i].type == JSMN_OBJECT
-		                        || t[i].type == JSMN_ARRAY );
+		default         : break;
 		}
 	}
 	return i;
@@ -183,8 +181,7 @@ size_t parse_result(jsmntok_t *t, size_t count) {
 		                  break;
 		case JSMN_ARRAY : i += skip_array(&t[i+1], t[i].size);
 		                  break;
-		default         : assert(  t[i].type == JSMN_OBJECT
-		                        || t[i].type == JSMN_ARRAY );
+		default         : break;
 		}
 	}
 	return i;
@@ -275,8 +272,7 @@ size_t parse_resultset(jsmntok_t *t, size_t count) {
 		                  break;
 		case JSMN_ARRAY : i += skip_array(&t[i+1], t[i].size);
 		                  break;
-		default         : assert(  t[i].type == JSMN_OBJECT
-		                        || t[i].type == JSMN_ARRAY );
+		default         : break;
 		}
 	}
 	dcur->len = dcur->error == 0 ? msg_len * 3 / 4
@@ -366,8 +362,7 @@ void handle_msm(const char *json, jsmntok_t *t, size_t r)
 		                  break;
 		case JSMN_ARRAY : i += skip_array(&t[i+1], t[i].size);
 		                  break;
-		default         : assert(  t[i].type == JSMN_OBJECT
-		                        || t[i].type == JSMN_ARRAY );
+		default         : break;
 		}
 	}
 	if (prb_id >= 0 && dcur > d1st) {
@@ -425,7 +420,7 @@ int parse_json(const char *json, const char *end)
 	}
 	if (tok != tok_spc)
 		free(tok);
-	return r;
+	return next <= json ? 0 : r;
 }
 
 
