@@ -2,6 +2,8 @@
 #define __DNST_H_
 #include <stdint.h>
 #include <sys/socket.h>
+#include <time.h>
+#include "rbtree.h"
 
 typedef struct dnst {
 	uint32_t time;
@@ -37,5 +39,61 @@ static inline dnst *dnst_next(dnst *d)
 
 static inline int dnst_fits(dnst *d, uint8_t *pos)
 { return &((uint8_t *)d)[dnst_sz(d)] <= pos; }
+
+typedef struct dnst_iter {
+	struct tm    start;
+	struct tm    stop;
+	char         msm_dir[4096];
+	unsigned int msm_id;
+	int          fd;
+	uint8_t     *buf;
+	uint8_t     *end_of_buf;
+	dnst        *cur;
+} dnst_iter;
+
+#define CAP_UNKNOWN 0
+#define CAP_CAN     1
+#define CAP_CANNOT  2
+#define CAP_BROKEN  3
+#define CAP_DOES    1
+#define CAP_DOESNT  2
+
+typedef struct dnst_rec {
+	uint32_t prb_id;   /* key */
+	uint8_t  addr[16]; /*******/
+
+	uint32_t time;
+
+	uint8_t         whoami_g[ 4]; /*      8310237 */
+	uint8_t         whoami_a[ 4]; /*      8310245 */
+	uint8_t         whoami_6[16]; /*      8310366 */
+
+	uint8_t     secure_reply[12]; /*   1: 8926853,  3: 8926855,  5: 8926857,
+	                               *   6: 8926859,  7: 8926861,  8: 8926863,
+	                               *  10: 8926865, 12: 8926867, 13: 8926869,
+	                               *  14: 8926871, 15: 8926873, 16: 8926875, 
+                                       */
+	uint8_t      bogus_reply[12]; /*   1: 8926854,  3: 8926856,  5: 8926858,
+	                               *   6: 8926860,  7: 8926862,  8: 8926864,
+	                               *  10: 8926866, 12: 8926868, 13: 8926870,
+	                               *  14: 8926872, 15: 8926874, 16: 8926876, 
+                                       */
+	uint8_t       dnskey_alg[12]; /*     inferred */
+
+	uint8_t  ds_secure_reply[ 2]; /*  38: 8926887, 48: 8926911 */
+	uint8_t   ds_bogus_reply[ 2]; /*  38: 8926888, 48: 8926912 */
+	uint8_t            ds_alg[2]; /*     inferred */
+
+	unsigned     qnamemin: 2;     /*      8310250 */
+	unsigned     tcp_ipv4: 2;     /*      8310360 */
+	unsigned     tcp_ipv6: 2;     /*      8310364 */
+	unsigned     nxdomain: 2;     /*      8311777 */
+
+	unsigned not_ta_19036: 2;     /*     15283670 */
+	unsigned not_ta_20326: 2;     /*     15283671 */
+
+	unsigned has_ta_19036: 2;     /*     inferred */
+	unsigned has_ta_20326: 2;     /*     inferred */
+} dnst_rec;
 
 #endif
