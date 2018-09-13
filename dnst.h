@@ -58,11 +58,19 @@ typedef struct dnst_iter {
 #define CAP_DOES    1
 #define CAP_DOESNT  2
 
-typedef struct dnst_rec {
+typedef struct dnst_rec_key {
 	uint32_t prb_id;   /* key */
 	uint8_t  addr[16]; /*******/
+} dnst_rec_key;
 
-	uint32_t time;
+typedef struct dnst_rec {
+	struct rbnode_type node;
+
+	dnst_rec_key key;
+
+	uint32_t updated; /* Discard if difference with previous update
+	                   * is more than 1 hour back in time? */
+	uint32_t logged;  /* Track time since last update */
 
 	uint8_t         whoami_g[ 4]; /*      8310237 */
 	uint8_t         whoami_a[ 4]; /*      8310245 */
@@ -83,6 +91,8 @@ typedef struct dnst_rec {
 	uint8_t  ds_secure_reply[ 2]; /*  38: 8926887, 48: 8926911 */
 	uint8_t   ds_bogus_reply[ 2]; /*  38: 8926888, 48: 8926912 */
 	uint8_t            ds_alg[2]; /*     inferred */
+
+	uint8_t         ecs_mask    ; /*     inferred */
 
 	unsigned     qnamemin: 2;     /*      8310250 */
 	unsigned     tcp_ipv4: 2;     /*      8310360 */

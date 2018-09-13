@@ -31,7 +31,7 @@ iter_dnsts.o: iter_dnsts.c dnst.h
 	$(CC) $(CFLAGS) -c $<
 
 iter_dnsts: iter_dnsts.o
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ iter_dnsts.o $(LDFLAGS) -lgetdns
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ iter_dnsts.o rbtree.o $(LDFLAGS) -lgetdns
 
 clean:
 	rm -f jsmn.o rbtree.o atlas2dnst.o atlas2dnst \
