@@ -14,7 +14,7 @@
 #include <time.h>
 #include <unistd.h>
 
-static const int quiet = 1;
+static int quiet = 0;
 
 void dnst_iter_done(dnst_iter *i)
 {
@@ -355,8 +355,13 @@ int main(int argc, const char **argv)
 
 	memset((void *)&start, 0, sizeof(struct tm));
 	memset((void *)&stop, 0, sizeof(struct tm));
+	if (argc > 1 && strcmp(argv[1], "-q") == 0) {
+		quiet = 1;
+		argc--;
+		argv++;
+	}
 	if (argc < 4)
-		printf("usage: %s <start-date> <stop-date> <msm_dir> [ ... ]\n", argv[0]);
+		printf("usage: [-q] %s <start-date> <stop-date> <msm_dir> [ ... ]\n", argv[0]);
 
 	else if (!(endptr = strptime(argv[1], "%Y-%m-%d", &start)) || *endptr)
 		fprintf(stderr, "Could not parse <start-date>\n");
