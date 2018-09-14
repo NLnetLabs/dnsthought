@@ -1,3 +1,5 @@
+#include "config.h"
+#include "dnst.h"
 #include <arpa/inet.h>
 #include <assert.h>
 #include <fcntl.h>
@@ -11,7 +13,8 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
-#include "dnst.h"
+
+static const int quiet = 1;
 
 void dnst_iter_done(dnst_iter *i)
 {
@@ -77,13 +80,16 @@ void dnst_iter_next(dnst_iter *i)
 
 void dnst_iter_init(dnst_iter *i, struct tm *start, struct tm *stop, const char *path)
 {
+	const char *slash;
 	if (mktime(start) >= mktime(stop))
 		return;
 
 	i->fd = -1;
 	i->start = *start;
 	i->stop  = *stop;
-	i->msm_id = atoi(strrchr(path, '/') + 1);
+	if (!(slash = strrchr(path, '/')))
+		i->msm_id = atoi(path);
+	else	i->msm_id = atoi(slash + 1);
 	(void)strlcpy(i->msm_dir, path, sizeof(i->msm_dir));
 	while (!i->cur && mktime(&i->start) < mktime(stop))
 		dnst_iter_open(i);
@@ -124,6 +130,9 @@ void rec_debug(FILE *f, const char *msg, unsigned int msm_id, uint32_t time, dns
 void log_rec(dnst_rec *rec)
 {
 	size_t i;
+
+	if (quiet)
+		return;
 
 	rec_debug( stdout, 0, 0, rec->updated, rec);
 	for (i = 0; i < 12; i++)

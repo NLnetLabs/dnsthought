@@ -1,16 +1,13 @@
 /* #define WITHOUT_MMAP 1 */
+#include "config.h"
 #include "jsmn.h"
 #include "rbtree.h"
 #include "dnst.h"
 #include <arpa/inet.h>
 #include <assert.h>
-#ifdef __linux__
-#include <bsd/string.h>
-#endif
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #ifndef WITHOUT_MMAP
 #include <fcntl.h>
 #include <sys/mman.h>
