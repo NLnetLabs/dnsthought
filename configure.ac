@@ -7,7 +7,7 @@ AC_CONFIG_HEADERS([config.h])
 AC_PROG_CC
 
 AC_CHECK_LIB([getdns], [getdns_context_set_listen_addresses],,
-        [AC_MSG_ERROR([Missing dependency: getdns >= 1.1.0 ])],)
+       [AC_MSG_ERROR([Missing dependency: getdns >= 1.1.0 ])],)
 
 AC_CHECK_HEADERS([bsd/string.h])
 AC_CHECK_FUNC([strlcpy], [], [AC_SEARCH_LIBS([strlcpy], [bsd])])

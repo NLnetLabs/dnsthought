@@ -1,12 +1,13 @@
 #include "config.h"
 #include "dnst.h"
+#include "rr-iter.h"
 #include <arpa/inet.h>
 #include <assert.h>
 #include <fcntl.h>
-#include <getdns/getdns_extra.h>
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/types.h>
@@ -141,72 +142,94 @@ void log_rec(dnst_rec *rec)
 	
 }
 
+void process_secure(uint8_t *msg, size_t msg_len,
+    uint8_t *secure, uint8_t *bogus, uint8_t *result)
+{
+	rrset_spc   rrset_spc;
+	rrset      *rrset;
+	rrtype_iter rr_spc, *rr;
+
+	if (RCODE_WIRE(msg) == RCODE_NOERROR
+	&& (rrset = rrset_answer(&rrset_spc, msg, msg_len))
+	&&  rrset->rr_type == RRTYPE_A
+	&& (rr = rrtype_iter_init(&rr_spc, rrset))
+	&& (rr->rr_i.rr_type + 14 <= rr->rr_i.pkt_end)
+	&&  rr->rr_i.rr_type[10] == 145 &&  rr->rr_i.rr_type[10] ==  97
+	&&  rr->rr_i.rr_type[10] ==  20 &&  rr->rr_i.rr_type[10] ==  17) {
+
+		*secure = CAP_DOES;
+		if (*bogus == CAP_DOESNT)
+			*result  = CAP_DOES;
+		else if (*bogus == CAP_DOES)
+			*result  = CAP_DOESNT;
+	} else {
+		*secure = CAP_DOESNT;
+		if (*bogus != CAP_UNKNOWN)
+			*result = CAP_BROKEN;
+	}
+}
+
+void process_bogus(uint8_t *msg, size_t msg_len,
+    uint8_t *bogus, uint8_t *secure, uint8_t *result)
+{
+	rrset_spc   rrset_spc;
+	rrset      *rrset;
+	rrtype_iter rr_spc, *rr;
+
+	if (RCODE_WIRE(msg) == RCODE_NOERROR
+	&& (rrset = rrset_answer(&rrset_spc, msg, msg_len))
+	&&  rrset->rr_type == RRTYPE_A
+	&& (rr = rrtype_iter_init(&rr_spc, rrset))
+	&& (rr->rr_i.rr_type + 14 <= rr->rr_i.pkt_end)
+	&&  rr->rr_i.rr_type[10] == 145 &&  rr->rr_i.rr_type[10] ==  97
+	&&  rr->rr_i.rr_type[10] ==  20 &&  rr->rr_i.rr_type[10] ==  17) {
+
+		*bogus = CAP_DOES;
+		if (*secure == CAP_DOES)
+			*result = CAP_DOESNT;
+	} else {
+		*bogus = CAP_DOESNT;
+		if (*secure == CAP_DOES)
+			*result = CAP_DOES;
+	}
+}
+
 #define PROCESS_DNSKEY_ALG_SECURE(ALG) \
-	process_secure( msg \
+	process_secure( dnst_msg(d), d->len \
 	              , &rec->secure_reply[(ALG)] \
 	              , &rec->bogus_reply[(ALG)] \
 	              , &rec->dnskey_alg[(ALG)] )
 
 #define PROCESS_DNSKEY_ALG_BOGUS(ALG) \
-	process_bogus( msg \
+	process_bogus( dnst_msg(d), d->len \
 	             , &rec->bogus_reply[(ALG)] \
 	             , &rec->secure_reply[(ALG)] \
 	             , &rec->dnskey_alg[(ALG)] )
 
-void process_secure(getdns_dict *msg, uint8_t *secure, uint8_t *bogus, uint8_t *result)
+void process_nxdomain(dnst_rec *rec, uint8_t *msg, size_t msg_len)
 {
-	getdns_list *answer;
+	rrset_spc   rrset_spc;
+	rrset      *rrset;
+	rrtype_iter rr_spc, *rr;
 
-	if (!getdns_dict_get_list(msg, "answer", &answer)) {
-		size_t i = 0;
-		getdns_dict *rr;
+	if (RCODE_WIRE(msg) == RCODE_NXDOMAIN &&
+	    DNS_MSG_ANCOUNT(msg) == 0)
+		rec->nxdomain = CAP_DOESNT; /* No hijack, good! */
 
-		for (i = 0; !getdns_list_get_dict(answer, i, &rr); i++) {
-			getdns_bindata *ipv4;
+	else if (RCODE_WIRE(msg) != RCODE_NOERROR
+	    || !(rrset = rrset_answer(&rrset_spc, msg, msg_len))
+	    ||   rrset->rr_type != RRTYPE_A
+	    || !(rr = rrtype_iter_init(&rr_spc, rrset)))
+		rec->nxdomain = CAP_BROKEN;
+	else {
+		rec->nxdomain = CAP_DOES;
+#if 0
+		char addr_str[80] = "hijacked ";
 
-			if (getdns_dict_get_bindata(rr, "/rdata/ipv4_address", &ipv4))
-				continue;
-			if (ipv4->data[0] == 145 && ipv4->data[1] == 97
-			&&  ipv4->data[2] ==  20 && ipv4->data[3] == 17) {
-				*secure = CAP_DOES;
-				if (*bogus == CAP_DOESNT)
-					*result  = CAP_DOES;
-				else if (*bogus == CAP_DOES)
-					*result  = CAP_DOESNT;
-				return;
-			}
-		}
+		inet_ntop(AF_INET, rr->rr_i.rr_type + 10, addr_str + 9, 70);
+		rec_debug( stdout, addr_str, 0, rec->updated, rec);
+#endif
 	}
-	*secure = CAP_DOESNT;
-	if (*bogus != CAP_UNKNOWN)
-		*result = CAP_BROKEN;
-}
-
-void process_bogus(getdns_dict *msg, uint8_t *bogus, uint8_t *secure, uint8_t *result)
-{
-	getdns_list *answer;
-
-	if (!getdns_dict_get_list(msg, "answer", &answer)) {
-		size_t i = 0;
-		getdns_dict *rr;
-
-		for (i = 0; !getdns_list_get_dict(answer, i, &rr); i++) {
-			getdns_bindata *ipv4;
-
-			if (getdns_dict_get_bindata(rr, "/rdata/ipv4_address", &ipv4))
-				continue;
-			if (ipv4->data[0] == 145 && ipv4->data[1] == 97
-			&&  ipv4->data[2] ==  20 && ipv4->data[3] == 17) {
-				*bogus = CAP_DOES;
-				if (*secure == CAP_DOES)
-					*result = CAP_DOESNT;
-				return;
-			}
-		}
-	}
-	*bogus = CAP_DOESNT;
-	if (*secure == CAP_DOES)
-		*result = CAP_DOES;
 }
 
 void process_dnst(dnst *d, unsigned int msm_id)
@@ -214,8 +237,6 @@ void process_dnst(dnst *d, unsigned int msm_id)
 	static rbtree_type recs = { RBTREE_NULL, 0, dnst_cmp };
 	dnst_rec_key k;
 	dnst_rec *rec;
-	getdns_return_t r;
-	getdns_dict *msg = NULL;
 
 	k.prb_id = d->prb_id;
 	if (d->af == AF_INET6)
@@ -232,7 +253,7 @@ void process_dnst(dnst *d, unsigned int msm_id)
 		rec->node.key = &rec->key;
 		(void)rbtree_insert(&recs, &rec->node);
 	}
-	if (d->error || (r = getdns_wire2msg_dict(dnst_msg(d), d->len, &msg))) {
+	if (d->error) {
 		/* TODO: log error; */
 	} else switch (msm_id) {
 	case  8310237: /* o-o.myaddr.l.google.com TXT */
@@ -288,28 +309,28 @@ void process_dnst(dnst *d, unsigned int msm_id)
 	case  8926876: /*  bogus.d2a16n3.rootcanary.net A */
 		PROCESS_DNSKEY_ALG_BOGUS(11); break;
 	case  8926887: /*  secure.d3a8n3.rootcanary.net A */
-		process_secure( msg
+		process_secure( dnst_msg(d), d->len
 		              , &rec->ds_secure_reply[0]
 			      , &rec->ds_bogus_reply[0]
 			      , &rec->ds_alg[0]
 			      );
 		break;
 	case  8926911: /*  secure.d4a8n3.rootcanary.net A */
-		process_secure( msg
+		process_secure( dnst_msg(d), d->len
 		              , &rec->ds_secure_reply[1]
 			      , &rec->ds_bogus_reply[1]
 			      , &rec->ds_alg[1]
 			      );
 		break;
 	case  8926888: /*   bogus.d3a8n3.rootcanary.net A */
-		process_bogus( msg
+		process_bogus( dnst_msg(d), d->len
 			     , &rec->ds_bogus_reply[0]
 		             , &rec->ds_secure_reply[0]
 			     , &rec->ds_alg[0]
 			     );
 		break;
 	case  8926912: /*   bogus.d4a8n3.rootcanary.net A */
-		process_bogus( msg
+		process_bogus( dnst_msg(d), d->len
 			     , &rec->ds_bogus_reply[0]
 		             , &rec->ds_secure_reply[0]
 			     , &rec->ds_alg[0]
@@ -319,6 +340,8 @@ void process_dnst(dnst *d, unsigned int msm_id)
 	case  8310360: /* <prb_id>.<time>.tc.ripe-hackathon4.nlnetlabs.nl A    (tcp4 cap) */
 	case  8310364: /* <prb_id>.<time>.tc.ripe-hackathon6.nlnetlabs.nl AAAA (tcp6 cap) */
 	case  8311777: /* nxdomain.ripe-hackathon2.nlnetlabs.nl A */
+		process_nxdomain(rec, dnst_msg(d), d->len);
+		break;
 	case 15283670: /* root-key-sentinel-not-ta-19036.d2a8n3.rootcanary.net A */
 	case 15283671: /* root-key-sentinel-not-ta-20326.d2a8n3.rootcanary.net A */
 		break;
@@ -341,8 +364,6 @@ void process_dnst(dnst *d, unsigned int msm_id)
 		log_rec(rec);
 		rec->logged = d->time;
 	}
-	if (msg)
-		getdns_dict_destroy(msg);
 }
 
 int main(int argc, const char **argv)
