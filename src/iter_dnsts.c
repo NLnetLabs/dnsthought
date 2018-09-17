@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#include <getdns/getdns_extra.h>
 
 static int quiet = 0;
 
@@ -127,19 +128,56 @@ void rec_debug(FILE *f, const char *msg, unsigned int msm_id, uint32_t time, dns
 	fprintf( f, "%s %5" PRIu32 "_%s\n"
 	       , timestr, rec->key.prb_id, addrstr);
 }
-
+static FILE *out = NULL;
 void log_rec(dnst_rec *rec)
 {
 	size_t i;
+	char addrstr[80];
+	char timestr[80];
+	struct tm tm;
+	time_t t;
 
-	if (quiet)
+	if (!out)
 		return;
 
-	rec_debug( stdout, 0, 0, rec->updated, rec);
+	t = rec->updated;
+	gmtime_r(&t, &tm);
+	strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S+00", &tm);
+
+	if (memcmp(rec->key.addr, ipv4_mapped_ipv6_prefix, 12) == 0)
+		inet_ntop(AF_INET, &rec->key.addr[12], addrstr, sizeof(addrstr));
+	else
+		inet_ntop(AF_INET6, rec->key.addr    , addrstr, sizeof(addrstr));
+
+	fprintf(out, "INSERT INTO dnsthought VALUES('%s', %" PRIu32 ", '%s'"
+	       , timestr, rec->key.prb_id, addrstr);
+	if (memcmp(rec->whoami_g, "\x00\x00\x00\x00", 4) == 0)
+		fprintf(out, ",NULL");
+	else	fprintf(out, ",'%s'", inet_ntop( AF_INET, rec->whoami_g
+		                               , addrstr, sizeof(addrstr)));
+
+	if (memcmp(rec->whoami_a, "\x00\x00\x00\x00", 4) == 0)
+		fprintf(out, ",NULL");
+	else	fprintf(out, ",'%s'", inet_ntop( AF_INET, rec->whoami_a
+		                               , addrstr, sizeof(addrstr)));
+	if (memcmp(rec->whoami_6, "\x00\x00\x00\x00\x00\x00\x00\x00"
+	                          "\x00\x00\x00\x00\x00\x00\x00\x00", 16) == 0)
+		fprintf(out, ",NULL");
+	else	fprintf(out, ",'%s'", inet_ntop( AF_INET6, rec->whoami_6
+		                               , addrstr , sizeof(addrstr)));
+
 	for (i = 0; i < 12; i++)
-		printf(",%" PRIu8, rec->dnskey_alg[i]);
-	printf("\n");
-	
+		fprintf(out, ",%" PRIu8, rec->dnskey_alg[i]);
+	for (i = 0; i < 2; i++)
+		fprintf(out, ",%" PRIu8, rec->ds_alg[i]);
+	fprintf(out, ",%" PRIu8, rec->ecs_mask);
+	fprintf(out, ",%d", (int)rec->qnamemin);
+	fprintf(out, ",%d", (int)rec->tcp_ipv4);
+	fprintf(out, ",%d", (int)rec->tcp_ipv6);
+	fprintf(out, ",%d", (int)rec->nxdomain);
+	fprintf(out, ",%d", (int)rec->has_ta_19036);
+	fprintf(out, ",%d", (int)rec->has_ta_20326);
+	fprintf(out, ") ON CONFLICT DO NOTHING;\n");
 }
 
 void process_secure(uint8_t *msg, size_t msg_len,
@@ -154,8 +192,8 @@ void process_secure(uint8_t *msg, size_t msg_len,
 	&&  rrset->rr_type == RRTYPE_A
 	&& (rr = rrtype_iter_init(&rr_spc, rrset))
 	&& (rr->rr_i.rr_type + 14 <= rr->rr_i.pkt_end)
-	&&  rr->rr_i.rr_type[10] == 145 &&  rr->rr_i.rr_type[10] ==  97
-	&&  rr->rr_i.rr_type[10] ==  20 &&  rr->rr_i.rr_type[10] ==  17) {
+	&&  rr->rr_i.rr_type[10] == 145 &&  rr->rr_i.rr_type[11] ==  97
+	&&  rr->rr_i.rr_type[12] ==  20 &&  rr->rr_i.rr_type[13] ==  17) {
 
 		*secure = CAP_DOES;
 		if (*bogus == CAP_DOESNT)
@@ -181,8 +219,8 @@ void process_bogus(uint8_t *msg, size_t msg_len,
 	&&  rrset->rr_type == RRTYPE_A
 	&& (rr = rrtype_iter_init(&rr_spc, rrset))
 	&& (rr->rr_i.rr_type + 14 <= rr->rr_i.pkt_end)
-	&&  rr->rr_i.rr_type[10] == 145 &&  rr->rr_i.rr_type[10] ==  97
-	&&  rr->rr_i.rr_type[10] ==  20 &&  rr->rr_i.rr_type[10] ==  17) {
+	&&  rr->rr_i.rr_type[10] == 145 &&  rr->rr_i.rr_type[11] ==  97
+	&&  rr->rr_i.rr_type[12] ==  20 &&  rr->rr_i.rr_type[13] ==  17) {
 
 		*bogus = CAP_DOES;
 		if (*secure == CAP_DOES)
@@ -209,19 +247,20 @@ void process_bogus(uint8_t *msg, size_t msg_len,
 void process_nxdomain(dnst_rec *rec, uint8_t *msg, size_t msg_len)
 {
 	rrset_spc   rrset_spc;
-	rrset      *rrset;
-	rrtype_iter rr_spc, *rr;
+	rrset      *rrset = NULL;
+	rrtype_iter rr_spc, *rr = NULL;
 
-	if (RCODE_WIRE(msg) == RCODE_NXDOMAIN &&
-	    DNS_MSG_ANCOUNT(msg) == 0)
+	if ((  RCODE_WIRE(msg) == RCODE_NXDOMAIN
+	    || RCODE_WIRE(msg) == RCODE_NOERROR)
+	&&  DNS_MSG_ANCOUNT(msg) == 0)
 		rec->nxdomain = CAP_DOESNT; /* No hijack, good! */
 
 	else if (RCODE_WIRE(msg) != RCODE_NOERROR
 	    || !(rrset = rrset_answer(&rrset_spc, msg, msg_len))
 	    ||   rrset->rr_type != RRTYPE_A
-	    || !(rr = rrtype_iter_init(&rr_spc, rrset)))
+	    || !(rr = rrtype_iter_init(&rr_spc, rrset))) {
 		rec->nxdomain = CAP_BROKEN;
-	else {
+	} else {
 		rec->nxdomain = CAP_DOES;
 #if 0
 		char addr_str[80] = "hijacked ";
@@ -232,9 +271,215 @@ void process_nxdomain(dnst_rec *rec, uint8_t *msg, size_t msg_len)
 	}
 }
 
+void process_whoami_g(dnst_rec *rec, uint8_t *msg, size_t msg_len)
+{
+	rrset_spc   rrset_spc;
+	rrset      *rrset;
+	rrtype_iter rr_spc, *rr;
+
+	if (RCODE_WIRE(msg) != RCODE_NOERROR
+	|| !(rrset = rrset_answer(&rrset_spc, msg, msg_len))
+	||   rrset->rr_type != RRTYPE_TXT)
+		; /* pass */
+	else for ( rr = rrtype_iter_init(&rr_spc, rrset)
+	         ; rr ; rr = rrtype_iter_next(rr)) {
+
+		uint16_t rd_len = READ_U16(rr->rr_i.rr_type + 8);
+		const uint8_t *rdata = rr->rr_i.rr_type + 10;
+		const uint8_t *eord  = rdata + rd_len;
+		uint8_t  txt_len;
+
+		if (eord > rr->rr_i.pkt_end)
+			break;
+		for (; rdata < eord; rdata += txt_len) {
+			char strbuf[80];
+
+			txt_len = *rdata;
+			rdata += 1;
+			if (txt_len > 20 &&
+			    memcmp(rdata, "edns0-client-subnet ", 20) == 0) {
+				const uint8_t *slash = rdata + txt_len - 1;
+				uint8_t numlen;
+
+				while (slash > rdata && *slash != '/')
+					slash--;
+				if (*slash == '/')
+					slash++;
+				numlen = txt_len - (slash - rdata);
+				if (numlen > sizeof(strbuf) - 1)
+					continue;
+				memcpy(strbuf, slash, numlen);
+				strbuf[numlen] = '\0';
+
+				rec->ecs_mask = atoi(strbuf);
+				continue;
+			}
+			if (txt_len > sizeof(strbuf) - 1)
+				continue;
+			memcpy(strbuf, rdata, txt_len);
+			strbuf[txt_len] = '\0';
+			inet_pton(AF_INET, strbuf, rec->whoami_g);
+		}
+	}
+}
+
+void process_whoami_a(dnst_rec *rec, uint8_t *msg, size_t msg_len)
+{
+	rrset_spc   rrset_spc;
+	rrset      *rrset;
+	rrtype_iter rr_spc, *rr;
+	const uint8_t *rdata;
+	uint16_t rdlen;
+
+	if (RCODE_WIRE(msg) == RCODE_NOERROR
+	&& (rrset = rrset_answer(&rrset_spc, msg, msg_len))
+	&&  rrset->rr_type == RRTYPE_A
+	&& (rr = rrtype_iter_init(&rr_spc, rrset))
+	&&  rr->rr_i.rr_type + 14 <= rr->rr_i.pkt_end
+	&&  READ_U16(rr->rr_i.rr_type + 8) == 4)
+		memcpy(rec->whoami_a, rr->rr_i.rr_type + 10, 4);
+}
+
+void process_whoami_6(dnst_rec *rec, uint8_t *msg, size_t msg_len)
+{
+	rrset_spc   rrset_spc;
+	rrset      *rrset;
+	rrtype_iter rr_spc, *rr;
+	const uint8_t *rdata;
+	uint16_t rdlen;
+
+	if (RCODE_WIRE(msg) == RCODE_NOERROR
+	&& (rrset = rrset_answer(&rrset_spc, msg, msg_len))
+	&&  rrset->rr_type == RRTYPE_AAAA
+	&& (rr = rrtype_iter_init(&rr_spc, rrset))
+	&&  rr->rr_i.rr_type + 26 <= rr->rr_i.pkt_end
+	&&  READ_U16(rr->rr_i.rr_type + 8) == 16)
+		memcpy(rec->whoami_6, rr->rr_i.rr_type + 10, 16);
+}
+
+void process_qnamemin(dnst_rec *rec, uint8_t *msg, size_t msg_len)
+{
+	rrset_spc   rrset_spc;
+	rrset      *rrset;
+	rrtype_iter rr_spc, *rr;
+
+	if (RCODE_WIRE(msg) != RCODE_NOERROR
+	|| !(rrset = rrset_answer(&rrset_spc, msg, msg_len))
+	||   rrset->rr_type != RRTYPE_TXT)
+		; /* pass */
+	else for ( rr = rrtype_iter_init(&rr_spc, rrset)
+	         ; rr ; rr = rrtype_iter_next(rr)) {
+
+		uint16_t rd_len = READ_U16(rr->rr_i.rr_type + 8);
+		const uint8_t *rdata = rr->rr_i.rr_type + 10;
+		const uint8_t *eord  = rdata + rd_len;
+		uint8_t  txt_len;
+
+		if (eord > rr->rr_i.pkt_end)
+			break;
+		for (; rdata < eord; rdata += txt_len) {
+			txt_len = *rdata;
+			rdata += 1;
+
+			if (txt_len >= 7 && memcmp(rdata, "HOORAY ", 7) == 0) {
+				rec->qnamemin = CAP_DOES;
+				break;
+			}
+			if (txt_len >= 3 && memcmp(rdata, "NO ", 3) == 0) {
+				rec->qnamemin = CAP_DOESNT;
+				break;
+			}
+		}
+	}
+}
+
+void process_tcp4(dnst_rec *rec, uint8_t *msg, size_t msg_len)
+{
+	rrset_spc   rrset_spc;
+	rrset      *rrset;
+	rrtype_iter rr_spc, *rr;
+	const uint8_t *rdata;
+	uint16_t rdlen;
+
+	if (RCODE_WIRE(msg) == RCODE_NOERROR
+	&& (rrset = rrset_answer(&rrset_spc, msg, msg_len))
+	&&  rrset->rr_type == RRTYPE_A
+	&& (rr = rrtype_iter_init(&rr_spc, rrset))
+	&&  rr->rr_i.rr_type + 14 <= rr->rr_i.pkt_end
+	&&  READ_U16(rr->rr_i.rr_type + 8) == 4)
+		rec->tcp_ipv4 = CAP_CAN;
+	else	rec->tcp_ipv4 = CAP_CANNOT;
+}
+
+void process_tcp6(dnst_rec *rec, uint8_t *msg, size_t msg_len)
+{
+	rrset_spc   rrset_spc;
+	rrset      *rrset;
+	rrtype_iter rr_spc, *rr;
+	const uint8_t *rdata;
+	uint16_t rdlen;
+
+	if (RCODE_WIRE(msg) == RCODE_NOERROR
+	&& (rrset = rrset_answer(&rrset_spc, msg, msg_len))
+	&&  rrset->rr_type == RRTYPE_AAAA
+	&& (rr = rrtype_iter_init(&rr_spc, rrset))
+	&&  rr->rr_i.rr_type + 26 <= rr->rr_i.pkt_end
+	&&  READ_U16(rr->rr_i.rr_type + 8) == 16)
+		rec->tcp_ipv6 = CAP_CAN;
+	else	rec->tcp_ipv6 = CAP_CANNOT;
+}
+
+
+void process_not_ta_19036(dnst_rec *rec, uint8_t *msg, size_t msg_len)
+{
+	rrset_spc   rrset_spc;
+	rrset      *rrset;
+	rrtype_iter rr_spc, *rr;
+
+	if (RCODE_WIRE(msg) == RCODE_NOERROR
+	&& (rrset = rrset_answer(&rrset_spc, msg, msg_len))
+	&&  rrset->rr_type == RRTYPE_A
+	&& (rr = rrtype_iter_init(&rr_spc, rrset))
+	&& (rr->rr_i.rr_type + 14 <= rr->rr_i.pkt_end)
+	&&  rr->rr_i.rr_type[10] == 145 &&  rr->rr_i.rr_type[11] ==  97
+	&&  rr->rr_i.rr_type[12] ==  20 &&  rr->rr_i.rr_type[13] ==  17) {
+
+		rec->not_ta_19036 = CAP_DOES;
+	} else {
+		rec->not_ta_19036 = CAP_DOESNT;
+		if (rec->dnskey_alg[5] == CAP_DOES)
+			rec->has_ta_19036 = CAP_DOES;
+	}
+}
+
+void process_not_ta_20326(dnst_rec *rec, uint8_t *msg, size_t msg_len)
+{
+	rrset_spc   rrset_spc;
+	rrset      *rrset;
+	rrtype_iter rr_spc, *rr;
+
+	if (RCODE_WIRE(msg) == RCODE_NOERROR
+	&& (rrset = rrset_answer(&rrset_spc, msg, msg_len))
+	&&  rrset->rr_type == RRTYPE_A
+	&& (rr = rrtype_iter_init(&rr_spc, rrset))
+	&& (rr->rr_i.rr_type + 14 <= rr->rr_i.pkt_end)
+	&&  rr->rr_i.rr_type[10] == 145 &&  rr->rr_i.rr_type[11] ==  97
+	&&  rr->rr_i.rr_type[12] ==  20 &&  rr->rr_i.rr_type[13] ==  17) {
+
+		rec->not_ta_20326 = CAP_DOES;
+		if (rec->dnskey_alg[5] == CAP_DOES
+		&&  rec->has_ta_19036  == CAP_DOES)
+			rec->has_ta_20326 = CAP_DOESNT;
+	} else {
+		rec->not_ta_20326 = CAP_DOESNT;
+		if (rec->dnskey_alg[5] == CAP_DOES)
+			rec->has_ta_20326 = CAP_DOES;
+	}
+}
+
+static rbtree_type recs = { RBTREE_NULL, 0, dnst_cmp };
 void process_dnst(dnst *d, unsigned int msm_id)
 {
-	static rbtree_type recs = { RBTREE_NULL, 0, dnst_cmp };
 	dnst_rec_key k;
 	dnst_rec *rec;
 
@@ -257,8 +502,13 @@ void process_dnst(dnst *d, unsigned int msm_id)
 		/* TODO: log error; */
 	} else switch (msm_id) {
 	case  8310237: /* o-o.myaddr.l.google.com TXT */
+		process_whoami_g(rec, dnst_msg(d), d->len);
+		break;
 	case  8310245: /* whoami.akamai.net A */
+		process_whoami_a(rec, dnst_msg(d), d->len);
+		break;
 	case  8310366: /* <prb_id>.<time>.ripe-hackathon6.nlnetlabs.nl AAAA (ipv6 cap) */
+		process_whoami_6(rec, dnst_msg(d), d->len);
 		break;
 	case  8926853: /*  secure.d2a1n1.rootcanary.net A */
 		PROCESS_DNSKEY_ALG_SECURE( 0); break;
@@ -337,13 +587,22 @@ void process_dnst(dnst *d, unsigned int msm_id)
 			     );
 		break;
 	case  8310250: /* qnamemintest.internet.nl TXT */
+		process_qnamemin(rec,  dnst_msg(d), d->len);
+		break;
 	case  8310360: /* <prb_id>.<time>.tc.ripe-hackathon4.nlnetlabs.nl A    (tcp4 cap) */
+		process_tcp4(rec, dnst_msg(d), d->len);
+		break;
 	case  8310364: /* <prb_id>.<time>.tc.ripe-hackathon6.nlnetlabs.nl AAAA (tcp6 cap) */
+		process_tcp6(rec, dnst_msg(d), d->len);
+		break;
 	case  8311777: /* nxdomain.ripe-hackathon2.nlnetlabs.nl A */
 		process_nxdomain(rec, dnst_msg(d), d->len);
 		break;
 	case 15283670: /* root-key-sentinel-not-ta-19036.d2a8n3.rootcanary.net A */
+		process_not_ta_19036(rec, dnst_msg(d), d->len);
+		break;
 	case 15283671: /* root-key-sentinel-not-ta-20326.d2a8n3.rootcanary.net A */
+		process_not_ta_20326(rec, dnst_msg(d), d->len);
 		break;
 	default:
 		fprintf(stderr, "Unknown msm_id: %u\n", msm_id);
@@ -373,6 +632,9 @@ int main(int argc, const char **argv)
 	struct tm   stop;
 	dnst_iter  *iters;
 	size_t    n_iters, i;
+	dnst_rec   *rec = NULL;
+	size_t      rec_data_sz = ((uint8_t *) rec) + sizeof(*rec)
+	                        - ((uint8_t *)&rec->key);
 
 	memset((void *)&start, 0, sizeof(struct tm));
 	memset((void *)&stop, 0, sizeof(struct tm));
@@ -398,10 +660,50 @@ int main(int argc, const char **argv)
 		fprintf(stderr, "Could not allocate dnst_iterators\n");
 
 	else {
+		char out_fn_tmp[40];
+		char out_fn[40];
+		char res_fn[40];
 		uint32_t prev_t;
 		int diff_t = 0;
 		dnst_iter *first;
+		int res_fd = -1;
+		struct stat st;
+		uint8_t *nodes;
+		size_t n_nodes = 0;
+		time_t forget = mktime(&start);
 
+		forget -= 864000; /* Forget resolvers more than 10 days old */
+
+		snprintf(res_fn, sizeof(res_fn), "%s.res", argv[1]);
+		if ((res_fd = open(res_fn, O_RDONLY)) < 0)
+			;
+		else if (fstat(res_fd, &st) < 0)
+			fprintf(stderr, "Could not fstat \"%s\"\n", res_fn);
+
+		else if (!(nodes = malloc((n_nodes = (st.st_size / rec_data_sz))
+		                         * sizeof(*rec))))
+			fprintf(stderr, "Could not allocate space for nodes\n");
+
+		else for (; n_nodes > 0; n_nodes--, nodes += sizeof(*rec)) {
+			rec = (void *)nodes;
+			if (read(res_fd, &rec->key, rec_data_sz) < 0)
+				perror("Error reading resolvers");
+			if ((time_t)rec->updated < forget)
+				continue;
+			rec->node.key = &rec->key;
+			(void)rbtree_insert(&recs, &rec->node);
+		}
+		if (res_fd >= 0) {
+			close(res_fd);
+			res_fd = -1;
+			fprintf(stderr, "Starting with %zu resolvers\n", recs.count);
+		}
+		if (!quiet && snprintf(out_fn_tmp, sizeof(out_fn_tmp),
+		    "%s_%s.psql.tmp", argv[1], argv[2]) < sizeof(out_fn_tmp)) {
+			snprintf( out_fn, sizeof(out_fn)
+			        , "%s_%s.psql", argv[1], argv[2]);
+			out = fopen(out_fn_tmp, "w");
+		}
 		for (i = 0; i < n_iters; i++)
 			dnst_iter_init(&iters[i], &start, &stop, argv[i+3]);
 
@@ -419,6 +721,20 @@ int main(int argc, const char **argv)
 		} while (first);
 		for (i = 0; i < n_iters; i++)
 			dnst_iter_done(&iters[i]);
+		if (out) {
+			fclose(out);
+			rename(out_fn_tmp, out_fn);
+		}
+		snprintf(res_fn, sizeof(res_fn), "%s.res", argv[2]);
+		if ((res_fd = open(res_fn, O_WRONLY | O_CREAT, 0644)) == -1)
+			fprintf(stderr, "Could not open '%s'\n", res_fn);
+
+		else RBTREE_FOR(rec, dnst_rec *, &recs) {
+			write(res_fd, &rec->key, rec_data_sz);
+		}
+		if (res_fd != -1)
+			close(res_fd);
+		fprintf(stderr, "%zu resolvers on exit\n", recs.count);
 	}
 	return 1;
 }
