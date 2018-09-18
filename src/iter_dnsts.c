@@ -152,21 +152,21 @@ void log_rec(dnst_rec *rec)
 	else
 		inet_ntop(AF_INET6, rec->key.addr    , addrstr, sizeof(addrstr));
 
-	fprintf(out, "INSERT INTO dnsthought VALUES('%s', %" PRIu32 ", '%s'"
+	fprintf(out, "%s,%" PRIu32 ",%s"
 	       , timestr, rec->key.prb_id, addrstr);
 	if (memcmp(rec->whoami_g, "\x00\x00\x00\x00", 4) == 0)
 		fprintf(out, ",NULL");
-	else	fprintf(out, ",'%s'", inet_ntop( AF_INET, rec->whoami_g
+	else	fprintf(out, ",%s", inet_ntop( AF_INET, rec->whoami_g
 		                               , addrstr, sizeof(addrstr)));
 
 	if (memcmp(rec->whoami_a, "\x00\x00\x00\x00", 4) == 0)
 		fprintf(out, ",NULL");
-	else	fprintf(out, ",'%s'", inet_ntop( AF_INET, rec->whoami_a
+	else	fprintf(out, ",%s", inet_ntop( AF_INET, rec->whoami_a
 		                               , addrstr, sizeof(addrstr)));
 	if (memcmp(rec->whoami_6, "\x00\x00\x00\x00\x00\x00\x00\x00"
 	                          "\x00\x00\x00\x00\x00\x00\x00\x00", 16) == 0)
 		fprintf(out, ",NULL");
-	else	fprintf(out, ",'%s'", inet_ntop( AF_INET6, rec->whoami_6
+	else	fprintf(out, ",%s", inet_ntop( AF_INET6, rec->whoami_6
 		                               , addrstr , sizeof(addrstr)));
 
 	for (i = 0; i < 12; i++)
@@ -180,7 +180,7 @@ void log_rec(dnst_rec *rec)
 	fprintf(out, ",%d", (int)rec->nxdomain);
 	fprintf(out, ",%d", (int)rec->has_ta_19036);
 	fprintf(out, ",%d", (int)rec->has_ta_20326);
-	fprintf(out, ") ON CONFLICT DO NOTHING;\n");
+	fprintf(out, "\n");
 }
 
 void process_secure(uint8_t *msg, size_t msg_len,
@@ -702,9 +702,9 @@ int main(int argc, const char **argv)
 			fprintf(stderr, "Starting with %zu resolvers\n", recs.count);
 		}
 		if (!quiet && snprintf(out_fn_tmp, sizeof(out_fn_tmp),
-		    "%s_%s.psql.tmp", argv[1], argv[2]) < sizeof(out_fn_tmp)) {
+		    "%s_%s.csv.tmp", argv[1], argv[2]) < sizeof(out_fn_tmp)) {
 			snprintf( out_fn, sizeof(out_fn)
-			        , "%s_%s.psql", argv[1], argv[2]);
+			        , "%s_%s.csv", argv[1], argv[2]);
 			out = fopen(out_fn_tmp, "w");
 		}
 		for (i = 0; i < n_iters; i++)
