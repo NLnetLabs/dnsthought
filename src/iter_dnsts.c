@@ -56,10 +56,12 @@ dnst *dnst_iter_open(dnst_iter *i)
 	else if ((i->buf = mmap( NULL, st.st_size
 	                       , PROT_READ, MAP_PRIVATE, i->fd, 0)) == MAP_FAILED)
 		fprintf(stderr, "Could not mmap \"%s\"\n", fn);
-	else {
-		i->end_of_buf = i->buf + st.st_size;
-		return (i->cur = (void *)i->buf);
-	}
+	else if (st.st_size >= 16
+	     &&  dnst_fits( (i->cur = (void *)i->buf)
+	                  , (i->end_of_buf = i->buf + st.st_size)))
+		return i->cur;
+	else
+		i->cur = NULL;
 	if (i->buf)
 		munmap(i->buf, i->end_of_buf - i->buf);
 	if (i->fd >= 0)
@@ -72,7 +74,8 @@ dnst *dnst_iter_open(dnst_iter *i)
 void dnst_iter_next(dnst_iter *i)
 {
 	i->cur = dnst_next(i->cur);
-	if ((uint8_t *)i->cur + 16 < i->end_of_buf)
+	if ((uint8_t *)i->cur + 16 < i->end_of_buf
+	&&  dnst_fits(i->cur, i->end_of_buf))
 		return;
 	dnst_iter_done(i);
 	i->start.tm_mday += 1;
@@ -735,6 +738,7 @@ int main(int argc, const char **argv)
 		if (res_fd != -1)
 			close(res_fd);
 		fprintf(stderr, "%zu resolvers on exit\n", recs.count);
+		return 0;
 	}
 	return 1;
 }
