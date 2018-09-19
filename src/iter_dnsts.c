@@ -100,11 +100,6 @@ void dnst_iter_init(dnst_iter *i, struct tm *start, struct tm *stop, const char 
 		dnst_iter_open(i);
 }
 
-static int dnst_cmp(const void *x, const void *y)
-{
-	return memcmp(x, y, sizeof(dnst_rec_key));
-}
-
 
 static const uint8_t ipv4_mapped_ipv6_prefix[] =
     "\x00\x00" "\x00\x00" "\x00\x00" "\x00\x00" "\x00\x00" "\xFF\xFF";
@@ -480,10 +475,14 @@ void process_not_ta_20326(dnst_rec *rec, uint8_t *msg, size_t msg_len)
 	}
 }
 
+static int dnst_cmp(const void *x, const void *y)
+{ return memcmp(x, y, sizeof(dnst_rec_key)); }
 static rbtree_type recs = { RBTREE_NULL, 0, dnst_cmp };
+
 void process_dnst(dnst *d, unsigned int msm_id)
 {
 	dnst_rec_key k;
+	dnst_rec_node *rec_node;
 	dnst_rec *rec;
 
 	k.prb_id = d->prb_id;
@@ -495,12 +494,13 @@ void process_dnst(dnst *d, unsigned int msm_id)
 	} else
 		return;
 
-	if (!(rec = (dnst_rec *)rbtree_search(&recs, &k))) {
-		rec = calloc(1, sizeof(dnst_rec));
-		rec->key = k;
-		rec->node.key = &rec->key;
-		(void)rbtree_insert(&recs, &rec->node);
+	if (!(rec_node = (dnst_rec_node *)rbtree_search(&recs, &k))) {
+		rec_node = calloc(1, sizeof(dnst_rec_node));
+		rec_node->rec.key = k;
+		rec_node->node.key = &rec_node->rec.key;
+		(void)rbtree_insert(&recs, &rec_node->node);
 	}
+	rec = &rec_node->rec;
 	if (d->error) {
 		/* TODO: log error; */
 	} else switch (msm_id) {
@@ -635,9 +635,7 @@ int main(int argc, const char **argv)
 	struct tm   stop;
 	dnst_iter  *iters;
 	size_t    n_iters, i;
-	dnst_rec   *rec = NULL;
-	size_t      rec_data_sz = ((uint8_t *) rec) + sizeof(*rec)
-	                        - ((uint8_t *)&rec->key);
+	dnst_rec_node *rec_node = NULL;
 
 	memset((void *)&start, 0, sizeof(struct tm));
 	memset((void *)&stop, 0, sizeof(struct tm));
@@ -683,18 +681,18 @@ int main(int argc, const char **argv)
 		else if (fstat(res_fd, &st) < 0)
 			fprintf(stderr, "Could not fstat \"%s\"\n", res_fn);
 
-		else if (!(nodes = malloc((n_nodes = (st.st_size / rec_data_sz))
-		                         * sizeof(*rec))))
+		else if (!(nodes = malloc((n_nodes = (st.st_size / sizeof(dnst_rec)))
+		                                                 * sizeof(dnst_rec_node))))
 			fprintf(stderr, "Could not allocate space for nodes\n");
 
-		else for (; n_nodes > 0; n_nodes--, nodes += sizeof(*rec)) {
-			rec = (void *)nodes;
-			if (read(res_fd, &rec->key, rec_data_sz) < 0)
+		else for (; n_nodes > 0; n_nodes--, nodes += sizeof(dnst_rec_node)) {
+			rec_node = (void *)nodes;
+			if (read(res_fd, &rec_node->rec, sizeof(dnst_rec)) < 0)
 				perror("Error reading resolvers");
-			if ((time_t)rec->updated < forget)
+			if ((time_t)rec_node->rec.updated < forget)
 				continue;
-			rec->node.key = &rec->key;
-			(void)rbtree_insert(&recs, &rec->node);
+			rec_node->node.key = &rec_node->rec.key;
+			(void)rbtree_insert(&recs, &rec_node->node);
 		}
 		if (res_fd >= 0) {
 			close(res_fd);
@@ -732,8 +730,8 @@ int main(int argc, const char **argv)
 		if ((res_fd = open(res_fn, O_WRONLY | O_CREAT, 0644)) == -1)
 			fprintf(stderr, "Could not open '%s'\n", res_fn);
 
-		else RBTREE_FOR(rec, dnst_rec *, &recs) {
-			write(res_fd, &rec->key, rec_data_sz);
+		else RBTREE_FOR(rec_node, dnst_rec_node *, &recs) {
+			write(res_fd, &rec_node->rec, sizeof(dnst_rec));
 		}
 		if (res_fd != -1)
 			close(res_fd);

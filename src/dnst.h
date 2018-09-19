@@ -64,8 +64,6 @@ typedef struct dnst_rec_key {
 } dnst_rec_key;
 
 typedef struct dnst_rec {
-	struct rbnode_type node;
-
 	dnst_rec_key key;
 
 	uint32_t updated; /* Discard if difference with previous update
@@ -104,6 +102,27 @@ typedef struct dnst_rec {
 
 	unsigned has_ta_19036: 2;     /*     inferred */
 	unsigned has_ta_20326: 2;     /*     inferred */
+
+	uint32_t      align;
 } dnst_rec;
+
+typedef struct dnst_rec_node {
+	struct rbnode_type node;
+	dnst_rec rec;
+} dnst_rec_node;
+
+typedef struct cap_counter {
+	size_t n_resolvers;
+	size_t n_probes;
+
+	size_t dnskey_alg[12][4];
+	size_t ds_alg[2][4];
+	size_t qnamemin[4];
+	size_t tcp_ipv4[4];
+	size_t tcp_ipv6[4];
+	size_t nxdomain[4];
+	size_t has_ta_19036[4];
+	size_t has_ta_20326[4];
+} cap_counter;
 
 #endif
