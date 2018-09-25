@@ -115,6 +115,8 @@ typedef struct cap_counter {
 	size_t n_resolvers;
 	size_t n_probes;
 
+	rbtree_type asns;
+
 	size_t dnskey_alg[12][4];
 	size_t ds_alg[2][4];
 	size_t qnamemin[4];

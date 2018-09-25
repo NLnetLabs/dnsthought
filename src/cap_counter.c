@@ -1,5 +1,7 @@
 #include "config.h"
 #include "dnst.h"
+#include "rbtree.h"
+#include "ranges.h"
 #include <arpa/inet.h>
 #include <assert.h>
 #include <fcntl.h>
@@ -14,90 +16,61 @@
 #include <time.h>
 #include <unistd.h>
 
-static int quiet = 0;
-
 static const uint8_t ipv4_mapped_ipv6_prefix[] =
     "\x00\x00" "\x00\x00" "\x00\x00" "\x00\x00" "\x00\x00" "\xFF\xFF";
 
-static void
-rec_debug(FILE *f, const char *msg, unsigned int msm_id, uint32_t time, dnst_rec *rec)
+
+typedef struct asn_count {
+	size_t count;
+	int asn;
+} asn_count;
+
+typedef struct asn_counter {
+	rbnode_type byasn;
+	rbnode_type bycount;
+
+	asn_count ac;
+} asn_counter;
+
+static int asncmp(const void *x, const void *y)
+{ return *(int *)x == *(int *)y ? 0 : *(int *)x < *(int *)y ? -1 : 1; };
+static int countcmp(const void *x, const void *y)
+{ return *(size_t *)x == *(size_t *)y ? 0 : *(size_t *)x > *(size_t *)y ? -1 : 1; };
+
+static rbtree_type byasn = { RBTREE_NULL, 0, asncmp };
+static rbtree_type bycount = { RBTREE_NULL, 0, countcmp };
+
+void cap_top20_asn(cap_counter *cap)
 {
-	char addrstr[80];
-	char timestr[80];
-	struct tm tm;
-	time_t t = time;
+	rbtree_type counts = { RBTREE_NULL, 0, countcmp };
+	asn_counter *c;
+	rbnode_type *n;
+	size_t i;
 
-	gmtime_r(&t, &tm);
-	strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M.%S", &tm);
-
-	if (memcmp(rec->key.addr, ipv4_mapped_ipv6_prefix, 12) == 0)
-		inet_ntop(AF_INET, &rec->key.addr[12], addrstr, sizeof(addrstr));
-	else
-		inet_ntop(AF_INET6, rec->key.addr    , addrstr, sizeof(addrstr));
-
-	if (msg)
-		fprintf(f, "%s ", msg);
-	if (msm_id)
-		fprintf(f, "%5u ", msm_id);
-	fprintf( f, "%s %5" PRIu32 "_%s\n"
-	       , timestr, rec->key.prb_id, addrstr);
+	RBTREE_FOR(c, asn_counter *, &cap->asns) {
+		c->bycount.key = &c->ac.count;
+		rbtree_insert(&counts, &c->bycount);
+	}
+	i = 0;
+	RBTREE_FOR(n, rbnode_type *, &counts) {
+		const asn_count *ac = n->key;
+		printf("ASN %6d, count: %5zu\n", ac->asn, ac->count);
+		if (i++ == 20)
+			break;
+	}
 }
 
-static void
-log_rec(FILE *out, dnst_rec *rec)
+void cap_counter_init(cap_counter *cap)
 {
-	size_t i;
-	char addrstr[80];
-	char timestr[80];
-	struct tm tm;
-	time_t t;
-
-	if (!out)
-		return;
-
-	t = rec->updated;
-	gmtime_r(&t, &tm);
-	strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S+00", &tm);
-
-	if (memcmp(rec->key.addr, ipv4_mapped_ipv6_prefix, 12) == 0)
-		inet_ntop(AF_INET, &rec->key.addr[12], addrstr, sizeof(addrstr));
-	else
-		inet_ntop(AF_INET6, rec->key.addr    , addrstr, sizeof(addrstr));
-
-	fprintf(out, "%s,%" PRIu32 ",%s"
-	       , timestr, rec->key.prb_id, addrstr);
-	if (memcmp(rec->whoami_g, "\x00\x00\x00\x00", 4) == 0)
-		fprintf(out, ",NULL");
-	else	fprintf(out, ",%s", inet_ntop( AF_INET, rec->whoami_g
-		                               , addrstr, sizeof(addrstr)));
-
-	if (memcmp(rec->whoami_a, "\x00\x00\x00\x00", 4) == 0)
-		fprintf(out, ",NULL");
-	else	fprintf(out, ",%s", inet_ntop( AF_INET, rec->whoami_a
-		                               , addrstr, sizeof(addrstr)));
-	if (memcmp(rec->whoami_6, "\x00\x00\x00\x00\x00\x00\x00\x00"
-	                          "\x00\x00\x00\x00\x00\x00\x00\x00", 16) == 0)
-		fprintf(out, ",NULL");
-	else	fprintf(out, ",%s", inet_ntop( AF_INET6, rec->whoami_6
-		                               , addrstr , sizeof(addrstr)));
-
-	for (i = 0; i < 12; i++)
-		fprintf(out, ",%" PRIu8, rec->dnskey_alg[i]);
-	for (i = 0; i < 2; i++)
-		fprintf(out, ",%" PRIu8, rec->ds_alg[i]);
-	fprintf(out, ",%" PRIu8, rec->ecs_mask);
-	fprintf(out, ",%d", (int)rec->qnamemin);
-	fprintf(out, ",%d", (int)rec->tcp_ipv4);
-	fprintf(out, ",%d", (int)rec->tcp_ipv6);
-	fprintf(out, ",%d", (int)rec->nxdomain);
-	fprintf(out, ",%d", (int)rec->has_ta_19036);
-	fprintf(out, ",%d", (int)rec->has_ta_20326);
-	fprintf(out, "\n");
+	memset(cap, 0, sizeof(cap_counter));
+	rbtree_init(&cap->asns, asncmp);
 }
 
 void count_cap(cap_counter *cap, dnst_rec *rec, int incr_n_probes)
 {
 	size_t i;
+	int asn = -1;
+	asn_counter *c;
 
 	cap->n_resolvers++;
 	if (incr_n_probes)
@@ -114,6 +87,21 @@ void count_cap(cap_counter *cap, dnst_rec *rec, int incr_n_probes)
 
 	cap->has_ta_19036[rec->has_ta_19036]++;
 	cap->has_ta_20326[rec->has_ta_20326]++;
+
+	if ((asn = lookup_asn4(rec->whoami_g)))
+		; /* pass */
+	else if (!(asn = lookup_asn4(rec->whoami_a)))
+		asn = lookup_asn6(rec->whoami_6);
+	
+	if ((c = (void *)rbtree_search(&cap->asns, &asn)))
+		c->ac.count++;
+
+	else if ((c = calloc(1, sizeof(asn_counter)))) {
+		c->ac.asn = asn;
+		c->ac.count = 1;
+		c->byasn.key = &c->ac.asn;
+		rbtree_insert(&cap->asns, &c->byasn);
+	}
 }
 
 static inline int back_one_day(struct tm *tm)
@@ -132,11 +120,13 @@ int main(int argc, const char **argv)
 	uint32_t    prev_prb_id = 0xFFFFFFFF;
 	size_t      res_by_prb[65536];
 	size_t      qres_by_prb[sizeof(res_by_prb)];
+	size_t      i;
 	
 	assert(sizeof(dnst_rec) == 104);
 
-	memset(&cap, 0, sizeof(cap));
-	memset(&qnamemincap, 0, sizeof(qnamemincap));
+	cap_counter_init(&cap);
+	for (i = 0; i < sizeof(qnamemincap) / sizeof(cap_counter); i++)
+		cap_counter_init(&qnamemincap[i]);
 	memset(&today, 0, sizeof(today));
 	memset(&res_by_prb, 0, sizeof(res_by_prb));
 	memset(&qres_by_prb, 0, sizeof(qres_by_prb));
@@ -200,7 +190,7 @@ int main(int argc, const char **argv)
 		printf("[%s] %" PRIu32 " %s\n", timestr, rec->key.prb_id, addrstr); 
 		*/
 	}
-	size_t i, n_res_per_qprb = 0, n_qres_per_qprb = 0, n_qnamemin_only = 0, n_res_qnamemin_only = 0;
+	size_t n_res_per_qprb = 0, n_qres_per_qprb = 0, n_qnamemin_only = 0, n_res_qnamemin_only = 0;
 	for (i = 0; i < sizeof(res_by_prb); i++) {
 		if (qres_by_prb[i]) {
 			n_qres_per_qprb += qres_by_prb[i];
@@ -219,6 +209,8 @@ int main(int argc, const char **argv)
 	      , (float)n_qres_per_qprb / (float)n_res_per_qprb
 	      , n_res_qnamemin_only, n_qnamemin_only
 	      );
+	cap_top20_asn(&cap);
+	cap_top20_asn(&qnamemincap[1]);
 
 	if (recs && recs != MAP_FAILED)
 		munmap(recs, st.st_size);

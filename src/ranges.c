@@ -45,8 +45,6 @@ int keycmp6(const void *x, const void *y)
 {
 	const u128   *key = x;
 	const range6 *r6 = y;
-
-	printf("key: "); fprint_u128(stdout, key); printf("\n");
 	return cmp_u128(key, &r6->from) == 0 ?  0
 	     : cmp_u128(key, &r6->from)  < 0 ? -1
 	     : cmp_u128(key, &r6->till)  < 0 ?  0 : 1;
