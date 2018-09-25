@@ -584,9 +584,9 @@ void process_dnst(dnst *d, unsigned int msm_id)
 		break;
 	case  8926912: /*   bogus.d4a8n3.rootcanary.net A */
 		process_bogus( dnst_msg(d), d->len
-			     , &rec->ds_bogus_reply[0]
-		             , &rec->ds_secure_reply[0]
-			     , &rec->ds_alg[0]
+			     , &rec->ds_bogus_reply[1]
+		             , &rec->ds_secure_reply[1]
+			     , &rec->ds_alg[1]
 			     );
 		break;
 	case  8310250: /* qnamemintest.internet.nl TXT */

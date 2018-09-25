@@ -37,8 +37,20 @@ static int asncmp(const void *x, const void *y)
 static int countcmp(const void *x, const void *y)
 { return *(size_t *)x == *(size_t *)y ? 0 : *(size_t *)x > *(size_t *)y ? -1 : 1; };
 
-static rbtree_type byasn = { RBTREE_NULL, 0, asncmp };
-static rbtree_type bycount = { RBTREE_NULL, 0, countcmp };
+typedef struct ecs_mask_count {
+	size_t count;
+	uint8_t ecs_mask;
+} ecs_mask_count;
+
+typedef struct ecs_mask_counter {
+	rbnode_type byecs_mask;
+	rbnode_type bycount;
+
+	ecs_mask_count ec;
+} ecs_mask_counter;
+
+static int ecs_maskcmp(const void *x, const void *y)
+{ return *(uint8_t *)x == *(uint8_t *)y ? 0 : *(uint8_t *)x < *(uint8_t *)y ? -1 : 1; };
 
 void cap_top20_asn(cap_counter *cap)
 {
@@ -64,13 +76,46 @@ void cap_counter_init(cap_counter *cap)
 {
 	memset(cap, 0, sizeof(cap_counter));
 	rbtree_init(&cap->asns, asncmp);
+	rbtree_init(&cap->ecs_masks, ecs_maskcmp);
 }
+
+static uint8_t const * const zeros =
+    (uint8_t const * const) "\x00\x00\x00\x00\x00\x00\x00\x00"
+                            "\x00\x00\x00\x00\x00\x00\x00\x00";
+
+static const cap_descr caps[] = {
+	{ 2, { "can_ipv6"     } },
+	{ 2, { "can_tcp"      } },
+	{ 2, { "can_tcp6"     } },
+	{ 2, { "does_ecs"     } },
+	//{ 3, { "internal"     , "external"        } },
+	{ 3, { "does_qnamemin", "doesnt_qnamemin" } },
+	{ 3, { "does_nxdomain", "doesnt_nxdomain" } },
+	{ 3, { "has_ta_19036" , "hasnt_ta_19036"  } },
+	{ 3, { "has_ta_20326" , "hasnt_ta_20326"  } },
+	{ 4, { "can_rsamd5"   , "cannot_rsamd5"   , "broken_rsamd5"    } },
+	{ 4, { "can_dsa"      , "cannot_dsa"      , "broken_dsa"       } },
+	{ 4, { "can_rsasha1"  , "cannot_rsasha1"  , "broken_rsasha1"   } },
+	{ 4, { "can_dsansec3" , "cannot_dsansec3" , "broken_dsansec3"  } },
+	{ 4, { "can_rsansec3" , "cannot_rsansec3" , "broken_rsannsec3" } },
+	{ 4, { "can_rsasha256", "cannot_rsasha256", "broken_rsasha256" } },
+	{ 4, { "can_rsasha512", "cannot_rsasha512", "broken_rsasha512" } },
+	{ 4, { "can_eccgost"  , "cannot_eccgost"  , "broken_ecchost"   } },
+	{ 4, { "can_ecdsa256" , "cannot_ecdsa256" , "broken_ecdsa256"  } },
+	{ 4, { "can_ecdsa384" , "cannot_ecdsa384" , "broken_ecdsa384"  } },
+	{ 4, { "can_ed25519"  , "cannot_ed25519"  , "broken_ed25519"   } },
+	{ 4, { "can_ed448"    , "cannot_ed448"    , "broken_ed448"     } },
+	{ 4, { "can_gost"     , "cannot_gost"     , "broken_gost"      } },
+	{ 4, { "can_sha384"   , "cannot_sha384"   , "broken_sha384"    } }
+};
+static const size_t n_caps = sizeof(caps) / sizeof(cap_descr);
 
 void count_cap(cap_counter *cap, dnst_rec *rec, int incr_n_probes)
 {
 	size_t i;
-	int asn = -1;
+	int asn = -1, has_ipv6 = 0;
 	asn_counter *c;
+	ecs_mask_counter *e;
 
 	cap->n_resolvers++;
 	if (incr_n_probes)
@@ -88,21 +133,164 @@ void count_cap(cap_counter *cap, dnst_rec *rec, int incr_n_probes)
 	cap->has_ta_19036[rec->has_ta_19036]++;
 	cap->has_ta_20326[rec->has_ta_20326]++;
 
-	if ((asn = lookup_asn4(rec->whoami_g)))
-		; /* pass */
-	else if (!(asn = lookup_asn4(rec->whoami_a)))
-		asn = lookup_asn6(rec->whoami_6);
-	
-	if ((c = (void *)rbtree_search(&cap->asns, &asn)))
-		c->ac.count++;
+	if (memcmp(rec->whoami_6, zeros, 16))
+		has_ipv6 = CAP_CAN;
+	cap->has_ipv6[has_ipv6]++;
 
-	else if ((c = calloc(1, sizeof(asn_counter)))) {
-		c->ac.asn = asn;
-		c->ac.count = 1;
-		c->byasn.key = &c->ac.asn;
-		rbtree_insert(&cap->asns, &c->byasn);
+	if (rec->ecs_mask != 0)
+		cap->does_ecs[CAP_DOES]++;
+
+	if (memcmp(rec->whoami_g, zeros, 4) != 0
+	&& (asn = lookup_asn4(rec->whoami_g)))
+		; /* pass */
+	else if (memcmp(rec->whoami_a, zeros, 4) != 0
+	&& (asn = lookup_asn4(rec->whoami_a)))
+		; /* pass */
+	else if (has_ipv6)
+		asn = lookup_asn6(rec->whoami_6);
+#if 0
+	if (asn > 0) {
+		int probe_asn = lookup_asn4(rec->key.addr);
+		if (probe_asn > 0) {
+			if (asn == probe_asn)
+				cap->int_ext[CAP_INTERN]++;
+			else	cap->int_ext[CAP_EXTERN]++;
+		}
+	}
+#endif
+	if (asn > 0) {
+		if ((c = (void *)rbtree_search(&cap->asns, &asn)))
+			c->ac.count++;
+
+		else if ((c = calloc(1, sizeof(asn_counter)))) {
+			c->ac.asn = asn;
+			c->ac.count = 1;
+			c->byasn.key = &c->ac.asn;
+			rbtree_insert(&cap->asns, &c->byasn);
+		}
+	}
+	if (rec->ecs_mask) {
+		if ((e = (void *)rbtree_search(&cap->ecs_masks, &rec->ecs_mask)))
+			e->ec.count++;
+
+		else if ((e = calloc(1, sizeof(ecs_mask_counter)))) {
+			e->ec.ecs_mask = rec->ecs_mask;
+			e->ec.count = 1;
+			e->byecs_mask.key = &e->ec.ecs_mask;
+			rbtree_insert(&cap->ecs_masks, &e->byecs_mask);
+		}
 	}
 }
+
+static const size_t n_asns = 10;
+static const size_t n_ecs_masks = 10;
+
+void cap_log(FILE *f, cap_counter *cap)
+{
+	size_t *counter = counter_values(cap);
+	rbtree_type counts = { RBTREE_NULL, 0, countcmp };
+	asn_counter *c;
+	ecs_mask_counter *e;
+	rbnode_type *n;
+	size_t i, remain;
+
+	fprintf(f, ",%zu,%zu", cap->n_resolvers, cap->n_probes);
+	for (i = 0; i < n_caps; i++) {
+		const cap_descr *d = caps + i;
+		uint8_t j;
+		for (j = 1; j < d->n_vals; j++)
+			//fprintf(f,",%s: %zu", d->val_names[j-1], counter[j]);
+			fprintf(f, ",%zu", counter[j]);
+		counter += 4;
+	}
+
+	RBTREE_FOR(c, asn_counter *, &cap->asns) {
+		c->bycount.key = &c->ac.count;
+		rbtree_insert(&counts, &c->bycount);
+	}
+	i = 0;
+	remain = 0;
+	RBTREE_FOR(n, rbnode_type *, &counts) {
+		const asn_count *ac = n->key;
+		if (i++ < n_asns)
+			fprintf(f,",%d,%zu", ac->asn, ac->count);
+		else	remain += ac->count;
+	}
+	while (i < n_asns) {
+		fprintf(f,",0,0");
+		i++;
+	}
+	fprintf(f,",%zu",remain);
+
+	rbtree_init(&counts, countcmp);
+	RBTREE_FOR(e, ecs_mask_counter *, &cap->ecs_masks) {
+		e->bycount.key = &e->ec.count;
+		rbtree_insert(&counts, &e->bycount);
+	}
+	i = 0;
+	remain = 0;
+	RBTREE_FOR(n, rbnode_type *, &counts) {
+		const ecs_mask_count *ec = n->key;
+		if (i++ < n_ecs_masks)
+			fprintf(f,",%" PRIu8 ",%zu", ec->ecs_mask, ec->count);
+		else	remain += ec->count;
+	}
+	while (i < n_ecs_masks) {
+		fprintf(f,",0,0");
+		i++;
+	}
+	fprintf(f,",%zu\n",remain);
+}
+void cap_hdr(FILE *f)
+{
+	size_t i;
+
+	fprintf(f,"\"datetime\",\"# resolvers\",\"# probes\"");
+	for (i = 0; i < n_caps; i++) {
+		const cap_descr *d = caps + i;
+		uint8_t j;
+		for (j = 1; j < d->n_vals; j++)
+			fprintf(f, ",\"%s\"", d->val_names[j-1]);
+	}
+	for (i = 0; i < n_asns; i++) {
+		fprintf(f,",\"ASN #%zu\",\"ASN #%zu count\"", (i+1), (i+1));
+	}
+	fprintf(f,"\"Remaining ASNs count\"");
+	for (i = 0; i < n_ecs_masks; i++) {
+		fprintf(f,",\"ECS mask #%zu\",\"ECS mask #%zu count\"", (i+1), (i+1));
+	}
+	fprintf(f,"\"Remaining ECS mask count\"\n");
+}
+
+#if 0
+static void
+count_recs(dnst_rec *rec, size_t n_recs, struct tm &day)
+{
+	for (; n_recs--; rec++) {
+		struct tm tm;
+		time_t t = rec->updated;
+		int incr_probes = rec->key.prb_id != prev_prb_id;
+
+		gmtime_r(&t, &tm);
+		if (tm.tm_mday != today.tm_mday
+		||  tm.tm_mon  != today.tm_mon
+		||  tm.tm_year != today.tm_year)
+			continue; /* Only records updated on this day */
+
+		assert(rec->key.prb_id < sizeof(res_by_prb));
+		res_by_prb[rec->key.prb_id]++;
+		if (rec->qnamemin == CAP_DOES)
+			qres_by_prb[rec->key.prb_id]++;
+
+		count_cap(&cap, rec, incr_probes);
+		count_cap(qnamemincap + rec->qnamemin, rec, incr_probes);
+
+		if (rec->key.prb_id != prev_prb_id)
+			prev_prb_id = rec->key.prb_id;
+	}
+}
+
+#endif
 
 static inline int back_one_day(struct tm *tm)
 { tm->tm_mday -= 1; mktime(tm); return 0; }
@@ -157,8 +345,6 @@ int main(int argc, const char **argv)
 	         ; n_recs > 0
 		 ; n_recs--, rec++) {
 
-		char addrstr[80];
-		char timestr[80];
 		struct tm tm;
 		time_t t = rec->updated;
 		int incr_probes = rec->key.prb_id != prev_prb_id;
@@ -167,7 +353,7 @@ int main(int argc, const char **argv)
 		if (tm.tm_mday != today.tm_mday
 		||  tm.tm_mon  != today.tm_mon
 		||  tm.tm_year != today.tm_year)
-			continue;
+			continue; /* Only records updated on this day */
 
 		assert(rec->key.prb_id < sizeof(res_by_prb));
 		res_by_prb[rec->key.prb_id]++;
@@ -179,38 +365,9 @@ int main(int argc, const char **argv)
 
 		if (rec->key.prb_id != prev_prb_id)
 			prev_prb_id = rec->key.prb_id;
-
-		/*
-		strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M.%S", &tm);
-		if (memcmp(rec->key.addr, ipv4_mapped_ipv6_prefix, 12) == 0)
-			inet_ntop(AF_INET, &rec->key.addr[12], addrstr, sizeof(addrstr));
-		else
-			inet_ntop(AF_INET6, rec->key.addr    , addrstr, sizeof(addrstr));
-
-		printf("[%s] %" PRIu32 " %s\n", timestr, rec->key.prb_id, addrstr); 
-		*/
 	}
-	size_t n_res_per_qprb = 0, n_qres_per_qprb = 0, n_qnamemin_only = 0, n_res_qnamemin_only = 0;
-	for (i = 0; i < sizeof(res_by_prb); i++) {
-		if (qres_by_prb[i]) {
-			n_qres_per_qprb += qres_by_prb[i];
-			n_res_per_qprb += res_by_prb[i];
-			if (qres_by_prb[i] == res_by_prb[i]) {
-				n_qnamemin_only++;
-				n_res_qnamemin_only += res_by_prb[i];
-			}
-		}
-	}
-	printf("%.4d-%.2d-%.2d,%zu,%zu,%zu,%zu,%f,%zu,%zu\n"
-	      , (int)today.tm_year + 1900, (int)today.tm_mon + 1, (int)today.tm_mday
-	      , qnamemincap[1].n_resolvers+ qnamemincap[2].n_resolvers
-	      , qnamemincap[1].n_probes   + qnamemincap[2].n_probes
-	      , qnamemincap[1].n_resolvers, qnamemincap[1].n_probes
-	      , (float)n_qres_per_qprb / (float)n_res_per_qprb
-	      , n_res_qnamemin_only, n_qnamemin_only
-	      );
-	cap_top20_asn(&cap);
-	cap_top20_asn(&qnamemincap[1]);
+	cap_hdr(stdout);
+	cap_log(stdout, &cap);
 
 	if (recs && recs != MAP_FAILED)
 		munmap(recs, st.st_size);

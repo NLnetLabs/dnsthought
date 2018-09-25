@@ -57,6 +57,8 @@ typedef struct dnst_iter {
 #define CAP_BROKEN  3
 #define CAP_DOES    1
 #define CAP_DOESNT  2
+#define CAP_INTERN  1
+#define CAP_EXTERN  2
 
 typedef struct dnst_rec_key {
 	uint32_t prb_id;   /* key */
@@ -116,15 +118,28 @@ typedef struct cap_counter {
 	size_t n_probes;
 
 	rbtree_type asns;
+	rbtree_type ecs_masks;
 
-	size_t dnskey_alg[12][4];
-	size_t ds_alg[2][4];
-	size_t qnamemin[4];
+	size_t has_ipv6[4];
 	size_t tcp_ipv4[4];
 	size_t tcp_ipv6[4];
+	size_t does_ecs[4];
+	//size_t int_ext[4];
+	size_t qnamemin[4];
 	size_t nxdomain[4];
 	size_t has_ta_19036[4];
 	size_t has_ta_20326[4];
+	size_t dnskey_alg[12][4];
+	size_t ds_alg[2][4];
 } cap_counter;
+
+static inline size_t *counter_values(cap_counter *cc)
+{ return cc->has_ipv6; }
+
+typedef struct cap_descr {
+	uint8_t   n_vals;
+	const char *val_names[4];
+	uint8_t (*get_val)(dnst_rec *rec);
+} cap_descr;
 
 #endif
