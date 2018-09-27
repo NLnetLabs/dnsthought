@@ -1,5 +1,6 @@
 #include "config.h"
 #include "dnst.h"
+#include "probes.h"
 #include "rbtree.h"
 #include "ranges.h"
 #include <arpa/inet.h>
@@ -141,8 +142,9 @@ static const cap_descr caps[] = {
     { 4, { "can_gost"     , "cannot_gost"     , "broken_gost"      }, cd_get_gost      },
     { 4, { "can_sha384"   , "cannot_sha384"   , "broken_sha384"    }, cd_get_sha384    }
 };
+static cap_descr const * const end_of_caps
+    = caps + (sizeof(caps) / sizeof(cap_descr));
 static const size_t n_caps = sizeof(caps) / sizeof(cap_descr);
-static cap_descr const * const end_of_caps = &caps[n_caps];
 
 typedef struct cap_sel  cap_sel;
 

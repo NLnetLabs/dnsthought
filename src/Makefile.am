@@ -1,11 +1,12 @@
-bin_PROGRAMS = atlas2dnst parse_dnst iter_dnsts cap_counter mk_asn_tables lookup_asn qnamemin_count
+bin_PROGRAMS = atlas2dnst parse_dnst iter_dnsts cap_counter mk_asn_tables lookup_asn qnamemin_count lookup_probe
 
 atlas2dnst_SOURCES = atlas2dnst.c jsmn.c
 parse_dnst_SOURCES = parse_dnst.c
 iter_dnsts_SOURCES = iter_dnsts.c rbtree.c rr-iter.c
-cap_counter_SOURCES= cap_counter.c table4.c table6.c ranges.c rbtree.c
+cap_counter_SOURCES= cap_counter.c table4.c table6.c ranges.c rbtree.c probes.c
 qnamemin_count_SOURCES= qnamemin_count.c table4.c table6.c ranges.c rbtree.c
 mk_asn_tables_SOURCES = mk_asn_tables.c
 lookup_asn_SOURCES = lookup_asn.c table4.c table6.c ranges.c
+lookup_probe_SOURCES = lookup_probe.c probes.c
 iter_dnsts_LDADD = @LIBOBJS@
 
