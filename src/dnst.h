@@ -114,11 +114,16 @@ typedef struct dnst_rec_node {
 } dnst_rec_node;
 
 typedef struct cap_counter {
+	uint32_t prev_prb_id;
+	uint32_t updated;
+
 	size_t n_resolvers;
 	size_t n_probes;
 
 	rbtree_type asns;
+	rbtree_type asn_counts;
 	rbtree_type ecs_masks;
+	rbtree_type ecs_counts;
 
 	size_t has_ipv6[4];
 	size_t tcp_ipv4[4];
@@ -132,6 +137,7 @@ typedef struct cap_counter {
 	size_t dnskey_alg[12][4];
 	size_t ds_alg[2][4];
 } cap_counter;
+
 
 static inline size_t *counter_values(cap_counter *cc)
 { return cc->has_ipv6; }
