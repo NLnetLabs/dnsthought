@@ -98,6 +98,31 @@ static uint8_t cd_get_tcp(dnst_rec *rec)          { return rec->tcp_ipv4; }
 static uint8_t cd_get_tcp6(dnst_rec *rec)         { return rec->tcp_ipv6; }
 static uint8_t cd_get_ecs(dnst_rec *rec)
 { return rec->ecs_mask ? CAP_DOES : CAP_UNKNOWN; }
+static uint8_t cd_get_internal(dnst_rec *rec)
+{
+	int asn = -1;
+
+	if (memcmp(rec->whoami_g, zeros, 4) != 0
+	&& (asn = lookup_asn4(rec->whoami_g)))
+		; /* pass */
+	else if (memcmp(rec->whoami_a, zeros, 4) != 0
+	&& (asn = lookup_asn4(rec->whoami_a)))
+		; /* pass */
+	else if (memcmp(rec->whoami_6, zeros, 6) != 0)
+		asn = lookup_asn6(rec->whoami_6);
+	if (asn > 0) {
+		probe *p = lookup_probe(rec->key.prb_id);
+		int probe_asn = lookup_asn4(rec->key.addr);
+
+		if ((p && p->asn_v4 == asn)
+		||  (p && p->asn_v6 == asn)
+		||  (probe_asn == asn))
+			return CAP_INTERN;
+		else if (p || probe_asn)
+			return CAP_EXTERN;
+	}
+	return CAP_UNKNOWN;
+}
 static uint8_t cd_get_qnamemin(dnst_rec *rec)     { return rec->qnamemin; }
 static uint8_t cd_get_nxdomain(dnst_rec *rec)     { return rec->nxdomain; }
 static uint8_t cd_get_has_ta_19036(dnst_rec *rec) { return rec->has_ta_19036; }
@@ -122,7 +147,7 @@ static const cap_descr caps[] = {
     { 2, { "can_tcp"      } , cd_get_tcp        },
     { 2, { "can_tcp6"     } , cd_get_tcp6       },
     { 2, { "does_ecs"     } , cd_get_ecs        },
-    //{ 3, { "internal"     , "external"        } },
+    { 3, { "internal"     , "external"        } , cd_get_internal     },
     { 3, { "does_qnamemin", "doesnt_qnamemin" } , cd_get_qnamemin     },
     { 3, { "does_nxdomain", "doesnt_nxdomain" } , cd_get_nxdomain     },
     { 3, { "has_ta_19036" , "hasnt_ta_19036"  } , cd_get_has_ta_19036 },
@@ -278,16 +303,17 @@ void count_cap(cap_counter *cap, dnst_rec *rec)
 		; /* pass */
 	else if (has_ipv6)
 		asn = lookup_asn6(rec->whoami_6);
-#if 0
 	if (asn > 0) {
+		probe *p = lookup_probe(rec->key.prb_id);
 		int probe_asn = lookup_asn4(rec->key.addr);
-		if (probe_asn > 0) {
-			if (asn == probe_asn)
-				cap->int_ext[CAP_INTERN]++;
-			else	cap->int_ext[CAP_EXTERN]++;
-		}
+
+		if ((p && p->asn_v4 == asn)
+		||  (p && p->asn_v6 == asn)
+		||  (probe_asn == asn))
+			cap->int_ext[CAP_INTERN]++;
+		else if (p || probe_asn)
+			cap->int_ext[CAP_EXTERN]++;
 	}
-#endif
 	if ((c = (void *)rbtree_search(&cap->asns, &asn)))
 		c->ac.count++;
 
@@ -556,8 +582,6 @@ int main(int argc, const char **argv)
 
 		report_cap_sel(sel, argv[2]);
 
-		fprintf(stderr, "asns: %zu\n", sel->counts.asns.count);
-		fprintf(stderr, "asns: %zu\n", sel->counts.asn_counts.count);
 		i = 0;
 		RBTREE_FOR(n, rbnode_type *, &sel->counts.asn_counts) {
 			const asn_count *ac = n->key;

@@ -129,7 +129,7 @@ typedef struct cap_counter {
 	size_t tcp_ipv4[4];
 	size_t tcp_ipv6[4];
 	size_t does_ecs[4];
-	//size_t int_ext[4];
+	size_t int_ext[4];
 	size_t qnamemin[4];
 	size_t nxdomain[4];
 	size_t has_ta_19036[4];
