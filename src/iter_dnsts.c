@@ -18,6 +18,10 @@
 
 static int quiet = 0;
 
+static uint8_t const * const zeros =
+    (uint8_t const * const) "\x00\x00\x00\x00\x00\x00\x00\x00"
+                            "\x00\x00\x00\x00\x00\x00\x00\x00";
+
 void dnst_iter_done(dnst_iter *i)
 {
 	if (i->buf)
@@ -140,7 +144,7 @@ void log_rec(dnst_rec *rec)
 
 	t = rec->updated;
 	gmtime_r(&t, &tm);
-	strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S+00", &tm);
+	strftime(timestr, sizeof(timestr), "%Y-%m-%dT%H:%M:%SZ", &tm);
 
 	if (memcmp(rec->key.addr, ipv4_mapped_ipv6_prefix, 12) == 0)
 		inet_ntop(AF_INET, &rec->key.addr[12], addrstr, sizeof(addrstr));
@@ -404,9 +408,11 @@ void process_tcp4(dnst_rec *rec, uint8_t *msg, size_t msg_len)
 	&&  rrset->rr_type == RRTYPE_A
 	&& (rr = rrtype_iter_init(&rr_spc, rrset))
 	&&  rr->rr_i.rr_type + 14 <= rr->rr_i.pkt_end
-	&&  READ_U16(rr->rr_i.rr_type + 8) == 4)
+	&&  READ_U16(rr->rr_i.rr_type + 8) == 4) {
 		rec->tcp_ipv4 = CAP_CAN;
-	else	rec->tcp_ipv4 = CAP_CANNOT;
+		if (memcmp(rec->whoami_a, zeros, 4) == 0)
+			memcpy(rec->whoami_a, rr->rr_i.rr_type + 10, 4);
+	} else	rec->tcp_ipv4 = CAP_CANNOT;
 }
 
 void process_tcp6(dnst_rec *rec, uint8_t *msg, size_t msg_len)
@@ -422,9 +428,11 @@ void process_tcp6(dnst_rec *rec, uint8_t *msg, size_t msg_len)
 	&&  rrset->rr_type == RRTYPE_AAAA
 	&& (rr = rrtype_iter_init(&rr_spc, rrset))
 	&&  rr->rr_i.rr_type + 26 <= rr->rr_i.pkt_end
-	&&  READ_U16(rr->rr_i.rr_type + 8) == 16)
+	&&  READ_U16(rr->rr_i.rr_type + 8) == 16) {
 		rec->tcp_ipv6 = CAP_CAN;
-	else	rec->tcp_ipv6 = CAP_CANNOT;
+		if (memcmp(rec->whoami_6, zeros, 16) == 0)
+			memcpy(rec->whoami_6, rr->rr_i.rr_type + 10, 16);
+	} else	rec->tcp_ipv6 = CAP_CANNOT;
 }
 
 
