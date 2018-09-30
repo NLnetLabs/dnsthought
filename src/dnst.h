@@ -58,7 +58,8 @@ typedef struct dnst_iter {
 #define CAP_DOES    1
 #define CAP_DOESNT  2
 #define CAP_INTERN  1
-#define CAP_EXTERN  2
+#define CAP_FORWARD 2
+#define CAP_EXTERN  3
 
 typedef struct dnst_rec_key {
 	uint32_t prb_id;   /* key */
@@ -75,6 +76,7 @@ typedef struct dnst_rec {
 	uint8_t         whoami_g[ 4]; /*      8310237 */
 	uint8_t         whoami_a[ 4]; /*      8310245 */
 	uint8_t         whoami_6[16]; /*      8310366 */
+	uint8_t         hijacked[ 4][4]; /*   8311777 */
 
 	uint8_t     secure_reply[12]; /*   1: 8926853,  3: 8926855,  5: 8926857,
 	                               *   6: 8926859,  7: 8926861,  8: 8926863,
@@ -129,13 +131,13 @@ typedef struct cap_counter {
 	size_t tcp_ipv4[4];
 	size_t tcp_ipv6[4];
 	size_t does_ecs[4];
-	size_t int_ext[4];
 	size_t qnamemin[4];
 	size_t nxdomain[4];
 	size_t has_ta_19036[4];
 	size_t has_ta_20326[4];
 	size_t dnskey_alg[12][4];
 	size_t ds_alg[2][4];
+	size_t int_ext[4];
 } cap_counter;
 
 

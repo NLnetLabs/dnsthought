@@ -384,9 +384,11 @@ int parse_json(const char *json, const char *end)
 	assert((end - 1) >= (json + 1));
 	json += 1;
 	end -= 1;
+	if (*end != ']')
+		return -666;
 	next = strnstr(json, "},{", (end - json));
 	next = next ? next + 1 : end;
-	while (next > json) {
+	while (next > json && next < end) {
 		jsmn_init(&p);
 		r = jsmn_parse(&p, json, next - json, tok, tokcount);
 		if (r == JSMN_ERROR_PART) {
@@ -408,6 +410,9 @@ int parse_json(const char *json, const char *end)
 			       , "Error %d occured parsing '%.*s'\n"
 			       , r, (int)(next - json), json);
 			break;
+		} else if (next >= end) {
+			json = next + 1;
+			break;
 		} else {
 			handle_msm(json, tok, r);
 			json = next + 1;
@@ -417,7 +422,7 @@ int parse_json(const char *json, const char *end)
 	}
 	if (tok != tok_spc)
 		free(tok);
-	return next <= json ? 0 : r;
+	return next >= end ? 0 : r;
 }
 
 
@@ -478,8 +483,10 @@ int main(int argc, const char **argv)
 
 	else if (fread(json, f_sz, 1, f) != 1)
 		fprintf(stderr, "Could not read content of \"%s\"\n", argv[1]);
-	else
+	else {
+		json[f_sz] = '\x00';
 		r = parse_json(json, json + f_sz);
+	}
 #endif
 
 #ifndef WITHOUT_MMAP
@@ -493,7 +500,17 @@ int main(int argc, const char **argv)
 	if (f)
 		fclose(f);
 #endif
-	if (out_fh)
+	if (r == -666) {
+		unlink(argv[1]);
+		fprintf(stderr, "Removing incomplete \"%s\"\n", argv[1]);
+	}
+
+	if (out_fh) {
 		fclose(out_fh);
+		if (r) {
+			fprintf(stderr, "Removing \"%s\" because of earlier error\n", out_fn);
+			unlink(out_fn);
+		}
+	}
 	return r;
 }

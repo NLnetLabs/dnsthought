@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from datetime import datetime, timedelta
+from dateutil.tz import *
 from sys import argv, exit
 import os.path
 import certifi
@@ -14,20 +15,22 @@ def fetch_msm_results(msm_id):
 	if not os.path.isdir(msm_id):
 		os.mkdir(msm_id)
 
-	utcnow   = datetime.utcnow()
-	start_dt = datetime(utcnow.year, utcnow.month, utcnow.day) - day
+	utc_start_of_day = datetime.now(tzlocal()).astimezone(tzutc()).replace(
+	    hour = 0, minute = 0, second = 0, microsecond = 0)
+	start_dt = utc_start_of_day - timedelta(days = 1)
 	while True:
 		fn = '%s/%s' % (msm_id, start_dt.strftime('%Y-%m-%d'))
 		if not os.path.exists(fn) and not os.path.exists(fn + '.dnst'):
 			break
-		start_dt -= day
+		start_dt -= timedelta(days = 1)
 
-	start = int(start_dt.strftime("%s"))
+	start = int(start_dt.astimezone(tzlocal()).strftime("%s"))
 	stop  = start + 24 * 60 * 60
+	#print start, stop
 
 	url  = 'https://atlas.ripe.net/api/v2/measurements/'
 	url += '%s/results/?start=%d&stop=%d' % (msm_id, start, stop)
-	print 'fetching', fn
+	#print 'fetching', fn
 	r = http.request('GET', url)
 	results[msm_id] = r.status
 	if r.status == 200:
@@ -36,7 +39,6 @@ def fetch_msm_results(msm_id):
 			fh.write(r.data)
 
 if __name__ == '__main__':
-	day = timedelta(days = 1)
 	http = urllib3.PoolManager( cert_reqs='CERT_REQUIRED'
 	                          , ca_certs=certifi.where())
 	results = dict()

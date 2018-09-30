@@ -1,7 +1,8 @@
-bin_PROGRAMS = atlas2dnst parse_dnst iter_dnsts cap_counter mk_asn_tables lookup_asn qnamemin_count lookup_probe
+bin_PROGRAMS = atlas2dnst parse_dnst iter_dnsts cap_counter mk_asn_tables lookup_asn qnamemin_count lookup_probe sort_dnst
 
 atlas2dnst_SOURCES = atlas2dnst.c jsmn.c
 parse_dnst_SOURCES = parse_dnst.c
+sort_dnst_SOURCES = sort_dnst.c
 iter_dnsts_SOURCES = iter_dnsts.c rbtree.c rr-iter.c
 cap_counter_SOURCES= cap_counter.c table4.c table6.c ranges.c rbtree.c probes.c
 qnamemin_count_SOURCES= qnamemin_count.c table4.c table6.c ranges.c rbtree.c
