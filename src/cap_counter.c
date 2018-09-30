@@ -21,7 +21,9 @@
 static const size_t n_ecs_masks = 10;
 static const size_t n_asns = 100;
 static const size_t print_n_ASNs = 20;
+static const size_t n_asn_sels = 100;
 
+#define DEBUG_fprintf(...)
 
 static const uint8_t ipv4_mapped_ipv6_prefix[] =
     "\x00\x00" "\x00\x00" "\x00\x00" "\x00\x00" "\x00\x00" "\xFF\xFF";
@@ -100,26 +102,43 @@ static uint8_t cd_get_ecs(dnst_rec *rec)
 { return rec->ecs_mask ? CAP_DOES : CAP_UNKNOWN; }
 static uint8_t cd_get_internal(dnst_rec *rec)
 {
-	int asn = -1;
+	int Z_asn1 = -1, Z_asn2 = -1, Z_asn6 = -1;
 
-	if (memcmp(rec->whoami_g, zeros, 4) != 0
-	&& (asn = lookup_asn4(rec->whoami_g)))
-		; /* pass */
-	else if (memcmp(rec->whoami_a, zeros, 4) != 0
-	&& (asn = lookup_asn4(rec->whoami_a)))
-		; /* pass */
-	else if (memcmp(rec->whoami_6, zeros, 6) != 0)
-		asn = lookup_asn6(rec->whoami_6);
-	if (asn > 0) {
-		probe *p = lookup_probe(rec->key.prb_id);
-		int probe_asn = lookup_asn4(rec->key.addr);
+	if (memcmp(rec->whoami_g, zeros, 4) != 0)
+		Z_asn1 = lookup_asn4(rec->whoami_g);
+	if (memcmp(rec->whoami_a, zeros, 4) != 0)
+		Z_asn2 = lookup_asn4(rec->whoami_a);
+	if (memcmp(rec->whoami_6, zeros, 16) != 0)
+		Z_asn6 = lookup_asn6(rec->whoami_6);
+	if (Z_asn1 > 0 || Z_asn2 > 0 || Z_asn6 > 0) {
+		/* X = configured ASN of probe
+		 * Y = configured resolver ASN (private address space etc.)
+		 * Z = ASN seen at authoritative
+		 * for  X Y Z
+		 *      a - a : internal
+		 *      a a c : forwarding
+		 *      a b c : forwarding
+		 *      a c c : external
+		 */
+		probe *X = lookup_probe(rec->key.prb_id);
+		int Y_asn = lookup_asn6(rec->key.addr);
 
-		if ((p && p->asn_v4 == asn)
-		||  (p && p->asn_v6 == asn)
-		||  (probe_asn == asn))
+		if ((X && Z_asn1 > 0 && X->asn_v4 == Z_asn1)
+		||  (X && Z_asn1 > 0 && X->asn_v6 == Z_asn1)
+		||  (X && Z_asn2 > 0 && X->asn_v4 == Z_asn2)
+		||  (X && Z_asn2 > 0 && X->asn_v6 == Z_asn2)
+		||  (X && Z_asn6 > 0 && X->asn_v4 == Z_asn6)
+		||  (X && Z_asn6 > 0 && X->asn_v6 == Z_asn6))
+
 			return CAP_INTERN;
-		else if (p || probe_asn)
+			
+		else if ((Z_asn1 > 0 && Y_asn == Z_asn1)
+		     ||  (Z_asn2 > 0 && Y_asn == Z_asn2)
+		     ||  (Z_asn6 > 0 && Y_asn == Z_asn6))
+
 			return CAP_EXTERN;
+		else
+			return CAP_FORWARD;
 	}
 	return CAP_UNKNOWN;
 }
@@ -147,7 +166,6 @@ static const cap_descr caps[] = {
     { 2, { "can_tcp"      } , cd_get_tcp        },
     { 2, { "can_tcp6"     } , cd_get_tcp6       },
     { 2, { "does_ecs"     } , cd_get_ecs        },
-    { 3, { "internal"     , "external"        } , cd_get_internal     },
     { 3, { "does_qnamemin", "doesnt_qnamemin" } , cd_get_qnamemin     },
     { 3, { "does_nxdomain", "doesnt_nxdomain" } , cd_get_nxdomain     },
     { 3, { "has_ta_19036" , "hasnt_ta_19036"  } , cd_get_has_ta_19036 },
@@ -165,7 +183,8 @@ static const cap_descr caps[] = {
     { 4, { "can_ed25519"  , "cannot_ed25519"  , "broken_ed25519"   }, cd_get_ed25519   },
     { 4, { "can_ed448"    , "cannot_ed448"    , "broken_ed448"     }, cd_get_ed448     },
     { 4, { "can_gost"     , "cannot_gost"     , "broken_gost"      }, cd_get_gost      },
-    { 4, { "can_sha384"   , "cannot_sha384"   , "broken_sha384"    }, cd_get_sha384    }
+    { 4, { "can_sha384"   , "cannot_sha384"   , "broken_sha384"    }, cd_get_sha384    },
+    { 4, { "is_internal"  , "is_forwarding"   , "is_external"      }, cd_get_internal     }
 };
 static cap_descr const * const end_of_caps
     = caps + (sizeof(caps) / sizeof(cap_descr));
@@ -261,13 +280,13 @@ static void reset_cap_sel(cap_sel *sel)
 void count_cap(cap_counter *cap, dnst_rec *rec)
 {
 	size_t i;
-	int asn = -1, has_ipv6 = 0;
+	int Z_asn1 = -1, Z_asn2 = -1, Z_asn6 = -1, asn = 1, has_ipv6 = 0;
 	asn_counter *c;
 	ecs_mask_counter *e;
 
 	cap->n_resolvers++;
 	if (rec->key.prb_id != cap->prev_prb_id) {
-		cap->prev_prb_id += 1;
+		cap->prev_prb_id = rec->key.prb_id;
 		cap->n_probes++;
 	}
 	if (rec->updated > cap->updated)
@@ -295,24 +314,84 @@ void count_cap(cap_counter *cap, dnst_rec *rec)
 	if (!cap->asns.cmp)
 		return;
 
-	if (memcmp(rec->whoami_g, zeros, 4) != 0
-	&& (asn = lookup_asn4(rec->whoami_g)))
-		; /* pass */
-	else if (memcmp(rec->whoami_a, zeros, 4) != 0
-	&& (asn = lookup_asn4(rec->whoami_a)))
-		; /* pass */
-	else if (has_ipv6)
-		asn = lookup_asn6(rec->whoami_6);
+	if (memcmp(rec->whoami_g, zeros, 4) != 0)
+		Z_asn1 = lookup_asn4(rec->whoami_g);
+	if (memcmp(rec->whoami_a, zeros, 4) != 0)
+		Z_asn2 = lookup_asn4(rec->whoami_a);
+	if (has_ipv6)
+		Z_asn6 = lookup_asn6(rec->whoami_6);
+	if (Z_asn1 > 0)
+		asn = Z_asn1;
+	else if (Z_asn2 > 0)
+		asn = Z_asn2;
+	else if (Z_asn6 > 0)
+		asn = Z_asn6;
 	if (asn > 0) {
-		probe *p = lookup_probe(rec->key.prb_id);
-		int probe_asn = lookup_asn4(rec->key.addr);
+		/* X = configured ASN of probe
+		 * Y = configured resolver ASN (private address space etc.)
+		 * Z = ASN seen at authoritative
+		 * for  X Y Z
+		 *      a - a : internal
+		 *      a a c : forwarding
+		 *      a b c : forwarding
+		 *      a c c : external
+		 */
+		probe *X = lookup_probe(rec->key.prb_id);
+		int Y_asn = lookup_asn6(rec->key.addr);
 
-		if ((p && p->asn_v4 == asn)
-		||  (p && p->asn_v6 == asn)
-		||  (probe_asn == asn))
+		if ((X && Z_asn1 > 0 && X->asn_v4 == Z_asn1)
+		||  (X && Z_asn1 > 0 && X->asn_v6 == Z_asn1)) {
 			cap->int_ext[CAP_INTERN]++;
-		else if (p || probe_asn)
+			asn = Z_asn1;
+			DEBUG_fprintf(stderr, "intern: Z: %d in X: (%d, %d)\n"
+			      , asn, X->asn_v4, X->asn_v6);
+
+		} else if ((X && Z_asn2 > 0 && X->asn_v4 == Z_asn2)
+		       ||  (X && Z_asn2 > 0 && X->asn_v6 == Z_asn2)) {
+			cap->int_ext[CAP_INTERN]++;
+			asn = Z_asn2;
+			DEBUG_fprintf(stderr, "intern: Z: %d in X: (%d, %d)\n"
+			      , asn, X->asn_v4, X->asn_v6);
+
+		} else if ((X && Z_asn6 > 0 && X->asn_v4 == Z_asn6)
+		       ||  (X && Z_asn6 > 0 && X->asn_v6 == Z_asn6)) {
+			cap->int_ext[CAP_INTERN]++;
+			asn = Z_asn6;
+			DEBUG_fprintf(stderr, "intern: Z: %d in X: (%d, %d)\n"
+			      , asn, X->asn_v4, X->asn_v6);
+
+		} else if (Z_asn1 > 0 && Y_asn == Z_asn1) {
 			cap->int_ext[CAP_EXTERN]++;
+			asn = Z_asn1;
+
+			DEBUG_fprintf(stderr, "extern: Z: %d == Y: %d\n"
+			      , asn, Y_asn);
+
+		} else if (Z_asn2 > 0 && Y_asn == Z_asn2) {
+			cap->int_ext[CAP_EXTERN]++;
+			asn = Z_asn2;
+
+			DEBUG_fprintf(stderr, "extern: Z: %d == Y: %d\n"
+			      , asn, Y_asn);
+
+
+		} else if (Z_asn6 > 0 && Y_asn == Z_asn6) {
+			cap->int_ext[CAP_EXTERN]++;
+			asn = Z_asn6;
+			DEBUG_fprintf(stderr, "extern: Z: %d == Y: %d\n"
+			      , asn, Y_asn);
+
+		} else {
+			cap->int_ext[CAP_FORWARD]++;
+			DEBUG_fprintf(stderr, "forward: Z: %d not in X: (%d, %d)\n"
+			      , asn, X->asn_v4, X->asn_v6);
+		}
+		DEBUG_fprintf(stderr, "cap: %p, int_ext: %d, %d, %d, %d\n"
+		       , cap
+		       , (int)cap->int_ext[0]
+		       , (int)cap->int_ext[1]
+		       , (int)cap->int_ext[2]
+		       , (int)cap->int_ext[3]);
 	}
 	if ((c = (void *)rbtree_search(&cap->asns, &asn)))
 		c->ac.count++;
@@ -371,7 +450,7 @@ static void cap_log(FILE *f, cap_counter *cap)
 	fprintf( f, "%.4d-%.2d-%.2dT%.2d:%.2d:%.2dZ,%zu,%zu"
 	       , tm.tm_year + 1900 , tm.tm_mon + 1 , tm.tm_mday
 	       , tm.tm_hour, tm.tm_min, tm.tm_sec
-	       , cap->n_resolvers, cap->n_probes);
+	       , cap->n_probes, cap->n_resolvers);
 	for (i = 0; i < n_caps; i++) {
 		const cap_descr *d = caps + i;
 		uint8_t j;
@@ -447,7 +526,7 @@ void cap_hdr(FILE *f)
 {
 	size_t i;
 
-	fprintf(f,"\"datetime\",\"# resolvers\",\"# probes\"");
+	fprintf(f,"\"datetime\",\"# probes\",\"# resolvers\"");
 	for (i = 0; i < n_caps; i++) {
 		const cap_descr *d = caps + i;
 		uint8_t j;
@@ -531,7 +610,9 @@ int main(int argc, const char **argv)
 	struct tm   tm;
 	time_t      t;
 	
-	assert(sizeof(dnst_rec) == 104);
+	static const dnst_rec_node node; /* Just for size assertion */
+	assert(sizeof(dnst_rec) == sizeof(dnst_rec_node) -
+            ((uint8_t *)&node.rec - (uint8_t *)&node));
 
 	memset(&today, 0, sizeof(today));
 
@@ -575,8 +656,7 @@ int main(int argc, const char **argv)
 		count_cap_sel(sel, rec);
 	}
 	if (sel) {
-		struct { int asn; size_t count; cap_sel *sel; } asn_sels[50];
-		const size_t n_asn_sels = sizeof(asn_sels) / sizeof(asn_sels[0]);
+		struct { int asn; size_t count; cap_sel *sel; } asn_sels[n_asn_sels];
 		rbnode_type *n;
 		size_t i;
 
