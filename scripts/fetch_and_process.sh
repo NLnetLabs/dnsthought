@@ -1,8 +1,10 @@
 #!/bin/sh
 
 DNSTHOUGHT_HOME=/home/hackathon/dnsthought
-SCRIPTS_DIR=${DNSTHOUGHT_HOME}/dnst-processing/scripts
-BIN_DIR=${DNSTHOUGHT_HOME}/dnst-processing/src
+#SCRIPTS_DIR=${DNSTHOUGHT_HOME}/dnst-processing/scripts
+#BIN_DIR=${DNSTHOUGHT_HOME}/dnst-processing/src
+SCRIPTS_DIR=/home/hackathon/bin
+BIN_DIR=${SCRIPTS_DIR}
 GET_DAILY_RESULTS=${SCRIPTS_DIR}/get-daily-results.py
 ATLAS2DNST=${BIN_DIR}/atlas2dnst
 SORT_DNST=${BIN_DIR}/sort_dnst
@@ -50,3 +52,9 @@ EOM
 		PREV_TIME=$CUR_TIME
 	done
 done
+cd ${DNSTHOUGHT_HOME}/processed2
+while nice -n 20 ./process.sh
+do
+	sleep 1
+done
+
