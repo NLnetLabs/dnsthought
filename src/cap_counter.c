@@ -174,7 +174,7 @@ static const cap_descr caps[] = {
     { 4, { "can_dsa"      , "cannot_dsa"      , "broken_dsa"       }, cd_get_dsa       },
     { 4, { "can_rsasha1"  , "cannot_rsasha1"  , "broken_rsasha1"   }, cd_get_rsasha1   },
     { 4, { "can_dsansec3" , "cannot_dsansec3" , "broken_dsansec3"  }, cd_get_dsansec3  },
-    { 4, { "can_rsansec3" , "cannot_rsansec3" , "broken_rsannsec3" }, cd_get_rsansec3  },
+    { 4, { "can_rsansec3" , "cannot_rsansec3" , "broken_rsansec3"  }, cd_get_rsansec3  },
     { 4, { "can_rsasha256", "cannot_rsasha256", "broken_rsasha256" }, cd_get_rsasha256 },
     { 4, { "can_rsasha512", "cannot_rsasha512", "broken_rsasha512" }, cd_get_rsasha512 },
     { 4, { "can_eccgost"  , "cannot_eccgost"  , "broken_eccgost"   }, cd_get_eccgost   },
@@ -438,11 +438,11 @@ static void cap_log(FILE *f, cap_counter *cap)
 	char timestr[80];
 	struct tm tm;
 	time_t t = cap->updated;
-	char ASNs[32768];
+	char ASNs[32768] = "";
 	size_t l;
 	size_t prev_count;
 	int prev_asn;
-	size_t asn_total;
+	size_t asn_total = 0;
 	size_t n_ASNs;
 
 	gmtime_r(&t, &tm);
@@ -663,6 +663,7 @@ int main(int argc, const char **argv)
 		report_cap_sel(sel, argv[2]);
 
 		i = 0;
+		memset(asn_sels, 0, sizeof(asn_sels));
 		RBTREE_FOR(n, rbnode_type *, &sel->counts.asn_counts) {
 			const asn_count *ac = n->key;
 
@@ -695,13 +696,13 @@ int main(int argc, const char **argv)
 			else if (memcmp(rec->whoami_6, zeros, 16) != 0) {
 				asn = lookup_asn6(rec->whoami_6);
 			}
-			for (i = 0; i < n_asn_sels; i++)
+			for (i = 0; i < n_asn_sels && asn_sels[i].sel; i++)
 				if (asn == asn_sels[i].asn) {
 					count_cap_sel(asn_sels[i].sel, rec);
 					break;
 				}
 		}
-		for (i = 0; i < n_asn_sels; i++) {
+		for (i = 0; i < n_asn_sels && asn_sels[i].sel; i++) {
 			char path[4096];
 			size_t l, l2;
 
