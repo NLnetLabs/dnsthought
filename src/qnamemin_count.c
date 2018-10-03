@@ -47,7 +47,7 @@ void cap_top20_asn(cap_counter *cap)
 	rbnode_type *n;
 	size_t i;
 
-	RBTREE_FOR(c, asn_counter *, &cap->asns) {
+	RBTREE_FOR(c, asn_counter *, &cap->auth_asns) {
 		c->bycount.key = &c->ac.count;
 		rbtree_insert(&counts, &c->bycount);
 	}
@@ -63,7 +63,7 @@ void cap_top20_asn(cap_counter *cap)
 void cap_counter_init(cap_counter *cap)
 {
 	memset(cap, 0, sizeof(cap_counter));
-	rbtree_init(&cap->asns, asncmp);
+	rbtree_init(&cap->auth_asns, asncmp);
 }
 
 void count_cap(cap_counter *cap, dnst_rec *rec, int incr_n_probes)
@@ -77,30 +77,30 @@ void count_cap(cap_counter *cap, dnst_rec *rec, int incr_n_probes)
 		cap->n_probes++;
 
 	for (i = 0; i < 12; i++)
-		cap->dnskey_alg[i][rec->dnskey_alg[i]]++;
+		cap->res.dnskey_alg[i][rec->dnskey_alg[i]]++;
 	for (i = 0; i < 2; i++)
-		cap->ds_alg[i][rec->ds_alg[i]]++;
-	cap->qnamemin[rec->qnamemin]++;
-	cap->tcp_ipv4[rec->tcp_ipv4]++;
-	cap->tcp_ipv6[rec->tcp_ipv6]++;
-	cap->nxdomain[rec->nxdomain]++;
+		cap->res.ds_alg[i][rec->ds_alg[i]]++;
+	cap->res.qnamemin[rec->qnamemin]++;
+	cap->res.tcp_ipv4[rec->tcp_ipv4]++;
+	cap->res.tcp_ipv6[rec->tcp_ipv6]++;
+	cap->res.nxdomain[rec->nxdomain]++;
 
-	cap->has_ta_19036[rec->has_ta_19036]++;
-	cap->has_ta_20326[rec->has_ta_20326]++;
+	cap->res.has_ta_19036[rec->has_ta_19036]++;
+	cap->res.has_ta_20326[rec->has_ta_20326]++;
 
 	if ((asn = lookup_asn4(rec->whoami_g)))
 		; /* pass */
 	else if (!(asn = lookup_asn4(rec->whoami_a)))
 		asn = lookup_asn6(rec->whoami_6);
 	
-	if ((c = (void *)rbtree_search(&cap->asns, &asn)))
+	if ((c = (void *)rbtree_search(&cap->auth_asns, &asn)))
 		c->ac.count++;
 
 	else if ((c = calloc(1, sizeof(asn_counter)))) {
 		c->ac.asn = asn;
 		c->ac.count = 1;
 		c->byasn.key = &c->ac.asn;
-		rbtree_insert(&cap->asns, &c->byasn);
+		rbtree_insert(&cap->auth_asns, &c->byasn);
 	}
 }
 

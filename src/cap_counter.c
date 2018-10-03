@@ -25,6 +25,12 @@ static const size_t n_asn_sels = 100;
 
 #define DEBUG_fprintf(...)
 
+static int prb_id_cmp(const void *x, const void *y)
+{ return *(uint32_t *)x == *(uint32_t *)y ? 0
+       : *(uint32_t *)x >  *(uint32_t *)y ? 1 : -1; }
+
+static rbtree_type probes = { RBTREE_NULL, 0, prb_id_cmp };
+
 static const uint8_t ipv4_mapped_ipv6_prefix[] =
     "\x00\x00" "\x00\x00" "\x00\x00" "\x00\x00" "\x00\x00" "\xFF\xFF";
 
@@ -74,8 +80,12 @@ static int ecs_countcmp(const void *x, const void *y)
 void cap_counter_init(cap_counter *cap)
 {
 	memset(cap, 0, sizeof(cap_counter));
-	rbtree_init(&cap->asns, asncmp);
-	rbtree_init(&cap->asn_counts, asn_countcmp);
+	rbtree_init(&cap->prb_asns, asncmp);
+	rbtree_init(&cap->prb_asn_counts, asn_countcmp);
+	rbtree_init(&cap->res_asns, asncmp);
+	rbtree_init(&cap->res_asn_counts, asn_countcmp);
+	rbtree_init(&cap->auth_asns, asncmp);
+	rbtree_init(&cap->auth_asn_counts, asn_countcmp);
 	rbtree_init(&cap->ecs_masks, ecs_maskcmp);
 	rbtree_init(&cap->ecs_counts, ecs_countcmp);
 }
@@ -85,7 +95,9 @@ static void rbnode_free(rbnode_type *node, void *ignore)
 
 void reset_cap_counter(cap_counter *cap)
 {
-	traverse_postorder(&cap->asns, rbnode_free, NULL);
+	traverse_postorder(&cap->prb_asns, rbnode_free, NULL);
+	traverse_postorder(&cap->res_asns, rbnode_free, NULL);
+	traverse_postorder(&cap->auth_asns, rbnode_free, NULL);
 	traverse_postorder(&cap->ecs_masks, rbnode_free, NULL);
 	cap_counter_init(cap);
 }
@@ -277,15 +289,42 @@ static void reset_cap_sel(cap_sel *sel)
 	reset_cap_counter(&sel->counts);
 }
 
+void cap_probe_count(cap_counter *cap)
+{
+	size_t i;
+	probe_counter *pc = (void *)rbtree_search(&probes, &cap->prev_prb_id);
+
+	if (pc) {
+		size_t *src = counter_values(&pc->counts);
+		size_t *dst = probe_counter_values(cap);
+		for (i = 0; i < n_caps * 4 ; i++)
+			*dst++ += *src++;
+
+	} else if (cap->prev_prb_id != 0)
+		fprintf(stderr, "%" PRIu32 " not found\n"
+			      , cap->prev_prb_id);
+}
+
 void count_cap(cap_counter *cap, dnst_rec *rec)
 {
 	size_t i;
 	int Z_asn1 = -1, Z_asn2 = -1, Z_asn6 = -1, asn = 1, has_ipv6 = 0;
 	asn_counter *c;
 	ecs_mask_counter *e;
+	probe *X = lookup_probe(rec->key.prb_id);
+	int X_asn = X == NULL ? -1
+	          : X->asn_v4 ? X->asn_v4
+	          : X->asn_v6 ? X->asn_v6 : -1;
+	int Y_asn = lookup_asn6(rec->key.addr);
+	
+	if (Y_asn == 0)
+		Y_asn = X_asn;
 
 	cap->n_resolvers++;
 	if (rec->key.prb_id != cap->prev_prb_id) {
+		/* Now update cap->prbs counter with values from cap->prev_prb_id
+		 */
+		cap_probe_count(cap);
 		cap->prev_prb_id = rec->key.prb_id;
 		cap->n_probes++;
 	}
@@ -293,25 +332,25 @@ void count_cap(cap_counter *cap, dnst_rec *rec)
 		cap->updated = rec->updated;
 
 	for (i = 0; i < 12; i++)
-		cap->dnskey_alg[i][rec->dnskey_alg[i]]++;
+		cap->res.dnskey_alg[i][rec->dnskey_alg[i]]++;
 	for (i = 0; i < 2; i++)
-		cap->ds_alg[i][rec->ds_alg[i]]++;
-	cap->qnamemin[rec->qnamemin]++;
-	cap->tcp_ipv4[rec->tcp_ipv4]++;
-	cap->tcp_ipv6[rec->tcp_ipv6]++;
-	cap->nxdomain[rec->nxdomain]++;
+		cap->res.ds_alg[i][rec->ds_alg[i]]++;
+	cap->res.qnamemin[rec->qnamemin]++;
+	cap->res.tcp_ipv4[rec->tcp_ipv4]++;
+	cap->res.tcp_ipv6[rec->tcp_ipv6]++;
+	cap->res.nxdomain[rec->nxdomain]++;
 
-	cap->has_ta_19036[rec->has_ta_19036]++;
-	cap->has_ta_20326[rec->has_ta_20326]++;
+	cap->res.has_ta_19036[rec->has_ta_19036]++;
+	cap->res.has_ta_20326[rec->has_ta_20326]++;
 
 	if (memcmp(rec->whoami_6, zeros, 16))
 		has_ipv6 = CAP_CAN;
-	cap->has_ipv6[has_ipv6]++;
+	cap->res.has_ipv6[has_ipv6]++;
 
 	if (rec->ecs_mask != 0)
-		cap->does_ecs[CAP_DOES]++;
+		cap->res.does_ecs[CAP_DOES]++;
 
-	if (!cap->asns.cmp)
+	if (!cap->auth_asns.cmp)
 		return;
 
 	if (memcmp(rec->whoami_g, zeros, 4) != 0)
@@ -336,71 +375,80 @@ void count_cap(cap_counter *cap, dnst_rec *rec)
 		 *      a b c : forwarding
 		 *      a c c : external
 		 */
-		probe *X = lookup_probe(rec->key.prb_id);
-		int Y_asn = lookup_asn6(rec->key.addr);
 
-		if ((X && Z_asn1 > 0 && X->asn_v4 == Z_asn1)
-		||  (X && Z_asn1 > 0 && X->asn_v6 == Z_asn1)) {
-			cap->int_ext[CAP_INTERN]++;
+		if (X && Z_asn1 > 0 && X->asn_v4 == Z_asn1) {
+			cap->res.int_ext[CAP_INTERN]++;
 			asn = Z_asn1;
-			DEBUG_fprintf(stderr, "intern: Z: %d in X: (%d, %d)\n"
-			      , asn, X->asn_v4, X->asn_v6);
+			X_asn = X->asn_v4;
 
-		} else if ((X && Z_asn2 > 0 && X->asn_v4 == Z_asn2)
-		       ||  (X && Z_asn2 > 0 && X->asn_v6 == Z_asn2)) {
-			cap->int_ext[CAP_INTERN]++;
+		} else if  (X && Z_asn1 > 0 && X->asn_v6 == Z_asn1) {
+			cap->res.int_ext[CAP_INTERN]++;
+			asn = Z_asn1;
+			X_asn = X->asn_v6;
+
+		} else if (X && Z_asn2 > 0 && X->asn_v4 == Z_asn2) {
+			cap->res.int_ext[CAP_INTERN]++;
 			asn = Z_asn2;
-			DEBUG_fprintf(stderr, "intern: Z: %d in X: (%d, %d)\n"
-			      , asn, X->asn_v4, X->asn_v6);
+			X_asn = X->asn_v4;
 
-		} else if ((X && Z_asn6 > 0 && X->asn_v4 == Z_asn6)
-		       ||  (X && Z_asn6 > 0 && X->asn_v6 == Z_asn6)) {
-			cap->int_ext[CAP_INTERN]++;
+		} else if (X && Z_asn2 > 0 && X->asn_v6 == Z_asn2) {
+			cap->res.int_ext[CAP_INTERN]++;
+			asn = Z_asn2;
+			X_asn = X->asn_v6;
+
+		} else if (X && Z_asn6 > 0 && X->asn_v4 == Z_asn6) {
+			cap->res.int_ext[CAP_INTERN]++;
 			asn = Z_asn6;
-			DEBUG_fprintf(stderr, "intern: Z: %d in X: (%d, %d)\n"
-			      , asn, X->asn_v4, X->asn_v6);
+			X_asn = X->asn_v4;
+
+		} else if (X && Z_asn6 > 0 && X->asn_v6 == Z_asn6) {
+			cap->res.int_ext[CAP_INTERN]++;
+			asn = Z_asn6;
+			X_asn = X->asn_v6;
 
 		} else if (Z_asn1 > 0 && Y_asn == Z_asn1) {
-			cap->int_ext[CAP_EXTERN]++;
+			cap->res.int_ext[CAP_EXTERN]++;
 			asn = Z_asn1;
 
-			DEBUG_fprintf(stderr, "extern: Z: %d == Y: %d\n"
-			      , asn, Y_asn);
-
 		} else if (Z_asn2 > 0 && Y_asn == Z_asn2) {
-			cap->int_ext[CAP_EXTERN]++;
+			cap->res.int_ext[CAP_EXTERN]++;
 			asn = Z_asn2;
 
-			DEBUG_fprintf(stderr, "extern: Z: %d == Y: %d\n"
-			      , asn, Y_asn);
-
-
 		} else if (Z_asn6 > 0 && Y_asn == Z_asn6) {
-			cap->int_ext[CAP_EXTERN]++;
+			cap->res.int_ext[CAP_EXTERN]++;
 			asn = Z_asn6;
-			DEBUG_fprintf(stderr, "extern: Z: %d == Y: %d\n"
-			      , asn, Y_asn);
-
 		} else {
-			cap->int_ext[CAP_FORWARD]++;
-			DEBUG_fprintf(stderr, "forward: Z: %d not in X: (%d, %d)\n"
-			      , asn, X->asn_v4, X->asn_v6);
+			if (X && (X->asn_v4 == Y_asn || X->asn_v6 == Y_asn))
+				X_asn = Y_asn;
+			cap->res.int_ext[CAP_FORWARD]++;
 		}
-		DEBUG_fprintf(stderr, "cap: %p, int_ext: %d, %d, %d, %d\n"
-		       , cap
-		       , (int)cap->int_ext[0]
-		       , (int)cap->int_ext[1]
-		       , (int)cap->int_ext[2]
-		       , (int)cap->int_ext[3]);
 	}
-	if ((c = (void *)rbtree_search(&cap->asns, &asn)))
+	if ((c = (void *)rbtree_search(&cap->prb_asns, &X_asn)))
+		c->ac.count++;
+
+	else if ((c = calloc(1, sizeof(asn_counter)))) {
+		c->ac.asn = X_asn;
+		c->ac.count = 1;
+		c->byasn.key = &c->ac.asn;
+		rbtree_insert(&cap->prb_asns, &c->byasn);
+	}
+	if ((c = (void *)rbtree_search(&cap->res_asns, &Y_asn)))
+		c->ac.count++;
+
+	else if ((c = calloc(1, sizeof(asn_counter)))) {
+		c->ac.asn = Y_asn;
+		c->ac.count = 1;
+		c->byasn.key = &c->ac.asn;
+		rbtree_insert(&cap->res_asns, &c->byasn);
+	}
+	if ((c = (void *)rbtree_search(&cap->auth_asns, &asn)))
 		c->ac.count++;
 
 	else if ((c = calloc(1, sizeof(asn_counter)))) {
 		c->ac.asn = asn;
 		c->ac.count = 1;
 		c->byasn.key = &c->ac.asn;
-		rbtree_insert(&cap->asns, &c->byasn);
+		rbtree_insert(&cap->auth_asns, &c->byasn);
 	}
 	if (rec->ecs_mask) {
 		if ((e = (void *)rbtree_search(&cap->ecs_masks, &rec->ecs_mask)))
@@ -428,63 +476,17 @@ void count_cap_sel(cap_sel *sel, dnst_rec *rec)
 		count_cap_sel(sel->children[i], rec);
 }
 
-static void cap_log(FILE *f, cap_counter *cap)
+static void log_asns(FILE *f, rbtree_type *asn_tree)
 {
-	size_t *counter = counter_values(cap);
-	asn_counter *c;
-	ecs_mask_counter *e;
 	rbnode_type *n;
-	size_t i, remain;
-	char timestr[80];
-	struct tm tm;
-	time_t t = cap->updated;
-	char ASNs[32768] = "";
-	size_t l;
-	size_t prev_count;
-	int prev_asn;
-	size_t asn_total = 0;
-	size_t n_ASNs;
+	size_t i = 0, remain = 0, l = 0;
+	char   ASNs[32768] = "";
+	size_t prev_count  = 0;
+	int    prev_asn    = -1;
+	size_t asn_total   = 0;
+	size_t n_ASNs      = 0;
 
-	gmtime_r(&t, &tm);
-	
-	fprintf( f, "%.4d-%.2d-%.2dT%.2d:%.2d:%.2dZ,%zu,%zu"
-	       , tm.tm_year + 1900 , tm.tm_mon + 1 , tm.tm_mday
-	       , tm.tm_hour, tm.tm_min, tm.tm_sec
-	       , cap->n_probes, cap->n_resolvers);
-	for (i = 0; i < n_caps; i++) {
-		const cap_descr *d = caps + i;
-		uint8_t j;
-		for (j = 1; j < d->n_vals; j++)
-			//fprintf(f,",%s: %zu", d->val_names[j-1], counter[j]);
-			fprintf(f, ",%zu", counter[j]);
-		counter += 4;
-	}
-	RBTREE_FOR(e, ecs_mask_counter *, &cap->ecs_masks) {
-		e->bycount.key = &e->ec.count;
-		rbtree_insert(&cap->ecs_counts, &e->bycount);
-	}
-	i = 0;
-	remain = 0;
-	RBTREE_FOR(n, rbnode_type *, &cap->ecs_counts) {
-		const ecs_mask_count *ec = n->key;
-		if (i++ < n_ecs_masks)
-			fprintf(f,",%" PRIu8 ",%zu", ec->ecs_mask, ec->count);
-		else	remain += ec->count;
-	}
-	while (i < n_ecs_masks) {
-		fprintf(f,",0,0");
-		i++;
-	}
-	fprintf(f,",%zu",remain);
-
-	RBTREE_FOR(c, asn_counter *, &cap->asns) {
-		c->bycount.key = &c->ac.count;
-		rbtree_insert(&cap->asn_counts, &c->bycount);
-	}
-	i = 0;
-	remain = 0;
-	prev_count = 0;
-	RBTREE_FOR(n, rbnode_type *, &cap->asn_counts) {
+	RBTREE_FOR(n, rbnode_type *, asn_tree) {
 		const asn_count *ac = n->key;
 		if (i >= n_asns)
 			remain += ac->count;
@@ -520,6 +522,74 @@ static void cap_log(FILE *f, cap_counter *cap)
 			fprintf(f,",0,\"\"");
 	}
 	fprintf(f,",%zu",remain);
+}
+
+static void cap_log(FILE *f, cap_counter *cap)
+{
+	size_t *counter = counter_values(cap);
+	size_t *prb_counter = probe_counter_values(cap);
+	rbnode_type *n;
+	asn_counter *c;
+	ecs_mask_counter *e;
+	size_t i, remain;
+	char timestr[80];
+	struct tm tm;
+	time_t t = cap->updated;
+
+	gmtime_r(&t, &tm);
+
+	if (cap->updated == 0)
+		return;
+	
+	fprintf( f, "%.4d-%.2d-%.2dT%.2d:%.2d:%.2dZ,%zu,%zu"
+	       , tm.tm_year + 1900 , tm.tm_mon + 1 , tm.tm_mday
+	       , tm.tm_hour, tm.tm_min, tm.tm_sec
+	       , cap->n_probes, cap->n_resolvers);
+	for (i = 0; i < n_caps; i++) {
+		const cap_descr *d = caps + i;
+		uint8_t j;
+		for (j = 1; j < d->n_vals; j++)
+			//fprintf(f,",%s: %zu", d->val_names[j-1], counter[j]);
+			fprintf(f, ",%zu", counter[j]);
+		for (j = 1; j < d->n_vals; j++)
+			//fprintf(f,",%s: %zu", d->val_names[j-1], counter[j]);
+			fprintf(f, ",%zu", prb_counter[j]);
+		counter += 4;
+		prb_counter += 4;
+	}
+	RBTREE_FOR(e, ecs_mask_counter *, &cap->ecs_masks) {
+		e->bycount.key = &e->ec.count;
+		rbtree_insert(&cap->ecs_counts, &e->bycount);
+	}
+	i = 0;
+	remain = 0;
+	RBTREE_FOR(n, rbnode_type *, &cap->ecs_counts) {
+		const ecs_mask_count *ec = n->key;
+		if (i++ < n_ecs_masks)
+			fprintf(f,",%" PRIu8 ",%zu", ec->ecs_mask, ec->count);
+		else	remain += ec->count;
+	}
+	while (i < n_ecs_masks) {
+		fprintf(f,",0,0");
+		i++;
+	}
+	fprintf(f,",%zu",remain);
+
+	RBTREE_FOR(c, asn_counter *, &cap->prb_asns) {
+		c->bycount.key = &c->ac.count;
+		rbtree_insert(&cap->prb_asn_counts, &c->bycount);
+	}
+	log_asns(f, &cap->prb_asn_counts);
+	RBTREE_FOR(c, asn_counter *, &cap->res_asns) {
+		c->bycount.key = &c->ac.count;
+		rbtree_insert(&cap->res_asn_counts, &c->bycount);
+	}
+	log_asns(f, &cap->res_asn_counts);
+	RBTREE_FOR(c, asn_counter *, &cap->auth_asns) {
+		c->bycount.key = &c->ac.count;
+		rbtree_insert(&cap->auth_asn_counts, &c->bycount);
+	}
+	log_asns(f, &cap->auth_asn_counts);
 	fprintf(f,"\n");
 }
 void cap_hdr(FILE *f)
@@ -532,15 +602,25 @@ void cap_hdr(FILE *f)
 		uint8_t j;
 		for (j = 1; j < d->n_vals; j++)
 			fprintf(f, ",\"%s\"", d->val_names[j-1]);
+		for (j = 1; j < d->n_vals; j++)
+			fprintf(f, ",\"%s_prbs\"", d->val_names[j-1]);
 	}
 	for (i = 0; i < n_ecs_masks; i++) {
 		fprintf(f,",\"ECS mask #%zu\",\"ECS mask #%zu count\"", (i+1), (i+1));
 	}
 	fprintf(f,",\"Remaining ECS mask count\"");
 	for (i = 0; i < n_asns; i++) {
-		fprintf(f,",\"band #%zu total\",\"band #%zu ASNs\"", (i+1), (i+1));
+		fprintf(f,",\"probe #%zu total\",\"probe #%zu ASNs\"", (i+1), (i+1));
 	}
-	fprintf(f,",\"Remaining ASNs count\"");
+	fprintf(f,",\"Remaining probe ASNs count\"");
+	for (i = 0; i < n_asns; i++) {
+		fprintf(f,",\"resolver #%zu total\",\"resolver #%zu ASNs\"", (i+1), (i+1));
+	}
+	fprintf(f,",\"Remaining resolver ASNs count\"");
+	for (i = 0; i < n_asns; i++) {
+		fprintf(f,",\"auth #%zu total\",\"auth #%zu ASNs\"", (i+1), (i+1));
+	}
+	fprintf(f,",\"Remaining auth ASNs count\"");
 	fprintf(f,"\n");
 }
 
@@ -550,7 +630,7 @@ static const char *cap_sel_fn(cap_sel *sel, char *path, size_t path_sz,
 	int r;
 	size_t i, l;
 
-	if (!*base_dir || (l = strlcpy(path, base_dir, path_sz) >= path_sz))
+	if (!*base_dir || (l = strlcpy(path, base_dir, path_sz)) >= path_sz)
 		return NULL;
 
 	if (path[l - 1] == '/') path[l - 1] = '\0';
@@ -559,7 +639,7 @@ static const char *cap_sel_fn(cap_sel *sel, char *path, size_t path_sz,
 		       , path, strerror(errno));
 		return NULL;
 	}
-	for (i = 0; i < n_caps; i++) {
+	if (sel) for (i = 0; i < n_caps; i++) {
 		if (!sel->sel[i]) continue;
 		if (strlcat(path, "/", path_sz) >= path_sz
 		||  strlcat(path, caps[i].val_names[sel->sel[i]-1], path_sz) >= path_sz)
@@ -589,9 +669,104 @@ static void report_cap_sel(cap_sel *sel, const char *report_dir)
 		cap_hdr(f);
 	else if (!(f = fopen(path, "a")))
 		return;
+	cap_probe_count(&sel->counts);
 	cap_log(f, &sel->counts);
+	fclose(f);
 	for (i = 0; i < sel->n_children; i++)
 		report_cap_sel(sel->children[i], report_dir);
+}
+
+static void log_probe(probe_counter *pc, const char *base_dir)
+{
+	char path[4096], fn_spc[3096];
+	const char *fn;
+	size_t l, l2;
+	FILE *f;
+
+	l = strlcpy(path, base_dir, sizeof(path));
+	assert(l > 0 && l < sizeof(path));
+
+	if (path[l - 1] == '/') l -= 1;
+	l2 = snprintf( path + l, sizeof(path) - l
+		     , "/ID_%" PRIu32, pc->recs->key.prb_id);
+	assert(l + l2 < sizeof(path));
+	if (!(fn = cap_sel_fn(NULL, fn_spc, sizeof(fn_spc), path, "report.csv"))) {
+		fprintf(stderr, "No fn for %s\n", path);
+		return;
+	}
+	else if ((f = fopen(fn, "wx")))
+		cap_hdr(f);
+	else if (!(f = fopen(fn, "a"))) {
+		fprintf(stderr, "No fn for %s\n", path);
+		return;
+	}
+	cap_log(f, &pc->counts);
+	fclose(f);
+}
+
+void report_asns(rbtree_type *asns, const char *prefix,
+    dnst_rec *rec, size_t n_recs, const char *base_dir, struct tm *today)
+{
+	struct {
+		int    asn;
+		size_t count;
+		cap_sel *sel;
+	}            asn_sels[n_asn_sels];
+	rbnode_type *n;
+	size_t       i;
+	time_t       t;
+	struct tm    tm;
+	const asn_count *ac;
+	int              asn;
+	char path[4096];
+	size_t l, l2;
+
+	i = 0;
+	memset(asn_sels, 0, sizeof(asn_sels));
+	RBTREE_FOR(n, rbnode_type *, asns) {
+		ac = n->key;
+		asn_sels[i].asn   = ac->asn;
+		asn_sels[i].count = ac->count;
+		asn_sels[i].sel   = new_cap_sel(1);
+		if (++i >= n_asn_sels)
+			break;
+	}
+	for (; n_recs > 0; n_recs--, rec++) {
+		asn = -1;
+		t = rec->updated;
+
+		gmtime_r(&t, &tm);
+		if (tm.tm_mday != today->tm_mday
+		||  tm.tm_mon  != today->tm_mon
+		||  tm.tm_year != today->tm_year)
+			continue; /* Only records updated on this day */
+
+		if (memcmp(rec->whoami_g, zeros, 4) != 0
+		&& (asn = lookup_asn4(rec->whoami_g)))
+			; /* pass */
+		else if (memcmp(rec->whoami_a, zeros, 4) != 0
+		&& (asn = lookup_asn4(rec->whoami_a)))
+			; /* pass */
+		else if (memcmp(rec->whoami_6, zeros, 16) != 0) {
+			asn = lookup_asn6(rec->whoami_6);
+		}
+		for (i = 0; i < n_asn_sels && asn_sels[i].sel; i++)
+			if (asn == asn_sels[i].asn) {
+				count_cap_sel(asn_sels[i].sel, rec);
+				break;
+			}
+	}
+	for (i = 0; i < n_asn_sels && asn_sels[i].sel; i++) {
+		l = strlcpy(path, base_dir, sizeof(path));
+		assert(l > 0 && l < sizeof(path));
+
+		if (path[l - 1] == '/') l -= 1;
+		l2 = snprintf( path + l, sizeof(path) - l
+			     , "/%s_AS%d", prefix, asn_sels[i].asn);
+		assert(l + l2 < sizeof(path));
+		report_cap_sel(asn_sels[i].sel, path);
+		destroy_cap_sel(asn_sels[i].sel);
+	}
 }
 
 static inline int back_one_day(struct tm *tm)
@@ -609,6 +784,9 @@ int main(int argc, const char **argv)
 	cap_sel    *sel = NULL;
 	struct tm   tm;
 	time_t      t;
+	probe_counter *prb_recs, *prb_rec = NULL;
+	dnst_rec      *prev_prb_rec;
+	size_t         i;
 	
 	static const dnst_rec_node node; /* Just for size assertion */
 	assert(sizeof(dnst_rec) == sizeof(dnst_rec_node) -
@@ -638,10 +816,61 @@ int main(int argc, const char **argv)
 			== MAP_FAILED)
 		fprintf(stderr, "Could not mmap \"%s\"\n", argv[1]);
 
-	else if (!(sel = new_cap_sel(2)))
-		fprintf(stderr, "Could not create counters\n");
+	else if (!(prb_recs = calloc(st.st_size/sizeof(dnst_rec), sizeof(probe_counter))))
+		fprintf(stderr, "Could not allocate mem for prb_recs\n");
 
-	else for ( n_recs = st.st_size / sizeof(dnst_rec), rec = recs
+	else if (!(sel = new_cap_sel(1)))
+		fprintf(stderr, "Could not create counters\n");
+	else {
+		prb_rec = prb_recs;
+		prb_rec->recs = prev_prb_rec = recs;
+		prb_rec->node.key = &prb_rec->recs->key.prb_id;
+		cap_counter_init(&prb_rec->counts);
+	}
+	if (sel) for ( n_recs = st.st_size / sizeof(dnst_rec), rec = recs
+	         ; n_recs > 0
+		 ; n_recs--, rec++) {
+
+		t = rec->updated;
+
+		gmtime_r(&t, &tm);
+		if (tm.tm_mday != today.tm_mday
+		||  tm.tm_mon  != today.tm_mon
+		||  tm.tm_year != today.tm_year)
+			continue; /* Only records updated on this day */
+
+		if (rec->key.prb_id != prev_prb_rec->key.prb_id) {
+			prb_rec->n_recs = rec - prb_rec->recs;
+			rbtree_insert(&probes, &prb_rec->node);
+
+			prb_rec += 1;
+			prb_rec->recs = prev_prb_rec = rec;
+			prb_rec->node.key = &prb_rec->recs->key.prb_id;
+			cap_counter_init(&prb_rec->counts);
+		} 
+		count_cap(&prb_rec->counts, rec);
+	}
+	if (prb_rec) {
+		prb_rec->n_recs = rec - prb_rec->recs;
+		rbtree_insert(&probes, &prb_rec->node);
+	}
+	if (sel) RBTREE_FOR(prb_rec, probe_counter *, &probes) {
+		/* Reset counter values to zeros and ones. 
+		 * (i.e. has this probe a resolver with the capability)
+		 *
+		 * These will be used to do probe counts for capabilities.
+		 * Per probe results should already have been logged.
+		 */
+		//fprintf(stderr, "%" PRIu32 " in tree\n", prb_rec->recs->key.prb_id);
+		size_t *counter = counter_values(&prb_rec->counts);
+
+		if (prb_rec->counts.n_resolvers)
+			log_probe(prb_rec, argv[2]);
+		for (i = 0; i < (n_caps * 4); i++, counter++) {
+			*counter = *counter ? 1 : 0;
+		}
+	}
+	if (sel) for ( n_recs = st.st_size / sizeof(dnst_rec), rec = recs
 	         ; n_recs > 0
 		 ; n_recs--, rec++) {
 
@@ -658,64 +887,13 @@ int main(int argc, const char **argv)
 	if (sel) {
 		struct { int asn; size_t count; cap_sel *sel; } asn_sels[n_asn_sels];
 		rbnode_type *n;
-		size_t i;
 
 		report_cap_sel(sel, argv[2]);
 
-		i = 0;
-		memset(asn_sels, 0, sizeof(asn_sels));
-		RBTREE_FOR(n, rbnode_type *, &sel->counts.asn_counts) {
-			const asn_count *ac = n->key;
-
-			asn_sels[i].asn   = ac->asn;
-			asn_sels[i].count = ac->count;
-			asn_sels[i].sel   = new_cap_sel(1);
-			if (i++ >= n_asn_sels)
-				break;
-		}
-		for ( n_recs = st.st_size / sizeof(dnst_rec), rec = recs
-			 ; n_recs > 0
-			 ; n_recs--, rec++) {
-
-			int asn = -1;
-			t = rec->updated;
-
-
-			gmtime_r(&t, &tm);
-			if (tm.tm_mday != today.tm_mday
-			||  tm.tm_mon  != today.tm_mon
-			||  tm.tm_year != today.tm_year)
-				continue; /* Only records updated on this day */
-
-			if (memcmp(rec->whoami_g, zeros, 4) != 0
-			&& (asn = lookup_asn4(rec->whoami_g)))
-				; /* pass */
-			else if (memcmp(rec->whoami_a, zeros, 4) != 0
-			&& (asn = lookup_asn4(rec->whoami_a)))
-				; /* pass */
-			else if (memcmp(rec->whoami_6, zeros, 16) != 0) {
-				asn = lookup_asn6(rec->whoami_6);
-			}
-			for (i = 0; i < n_asn_sels && asn_sels[i].sel; i++)
-				if (asn == asn_sels[i].asn) {
-					count_cap_sel(asn_sels[i].sel, rec);
-					break;
-				}
-		}
-		for (i = 0; i < n_asn_sels && asn_sels[i].sel; i++) {
-			char path[4096];
-			size_t l, l2;
-
-			l = strlcpy(path, argv[2], sizeof(path));
-			assert(l > 0 && l < sizeof(path));
-
-			if (path[l - 1] == '/') l -= 1;
-			l2 = snprintf( path + l, sizeof(path) - l
-			             , "/AS%d", asn_sels[i].asn);
-			assert(l + l2 < sizeof(path));
-			report_cap_sel(asn_sels[i].sel, path);
-			destroy_cap_sel(asn_sels[i].sel);
-		}
+		n_recs = st.st_size / sizeof(dnst_rec);
+		report_asns(&sel->counts.prb_asn_counts, "prb", recs, n_recs, argv[2], &today);
+		report_asns(&sel->counts.res_asn_counts, "res", recs, n_recs, argv[2], &today);
+		report_asns(&sel->counts.auth_asn_counts, "auth", recs, n_recs, argv[2], &today);
 		destroy_cap_sel(sel);
 	}
 	if (recs && recs != MAP_FAILED)

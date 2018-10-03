@@ -115,18 +115,7 @@ typedef struct dnst_rec_node {
 	dnst_rec rec;
 } dnst_rec_node;
 
-typedef struct cap_counter {
-	uint32_t prev_prb_id;
-	uint32_t updated;
-
-	size_t n_resolvers;
-	size_t n_probes;
-
-	rbtree_type asns;
-	rbtree_type asn_counts;
-	rbtree_type ecs_masks;
-	rbtree_type ecs_counts;
-
+typedef struct cap_counters {
 	size_t has_ipv6[4];
 	size_t tcp_ipv4[4];
 	size_t tcp_ipv6[4];
@@ -138,11 +127,39 @@ typedef struct cap_counter {
 	size_t dnskey_alg[12][4];
 	size_t ds_alg[2][4];
 	size_t int_ext[4];
+} cap_counters;
+
+typedef struct cap_counter {
+	uint32_t prev_prb_id;
+	uint32_t updated;
+
+	size_t n_resolvers;
+	size_t n_probes;
+
+	rbtree_type prb_asns;
+	rbtree_type prb_asn_counts;
+	rbtree_type res_asns;
+	rbtree_type res_asn_counts;
+	rbtree_type auth_asns;
+	rbtree_type auth_asn_counts;
+	rbtree_type ecs_masks;
+	rbtree_type ecs_counts;
+
+	cap_counters res;
+	cap_counters prbs;
 } cap_counter;
 
+typedef struct probe_counter {
+	rbnode_type node;
+	dnst_rec   *recs;
+	size_t    n_recs;
+	cap_counter counts;
+} probe_counter;
 
 static inline size_t *counter_values(cap_counter *cc)
-{ return cc->has_ipv6; }
+{ return cc->res.has_ipv6; }
+static inline size_t *probe_counter_values(cap_counter *cc)
+{ return cc->prbs.has_ipv6; }
 
 typedef struct cap_descr {
 	uint8_t   n_vals;
