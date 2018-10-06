@@ -169,8 +169,8 @@ void log_rec(dnst_rec *rec)
 		                               , addrstr , sizeof(addrstr)));
 	fprintf(out, ",%d", (int)rec->tcp_ipv4);
 	fprintf(out, ",%d", (int)rec->tcp_ipv6);
-	fprintf(out, ",%" PRIu8 ",%d", rec->ecs_mask
-	                             , rec->ecs_mask ? 1 : 0);
+	fprintf(out, ",%" PRIu8 ",%" PRIu8 ",%d",
+	    rec->ecs_mask, rec->ecs_mask6, (rec->ecs_mask || rec->ecs_mask6 ? 1 : 0));
 	fprintf(out, ",%d", rec->qnamemin     == CAP_DOES   ? 1 : 0);
 	fprintf(out, ",%d", rec->qnamemin     == CAP_DOESNT ? 1 : 0);
 	for ( i = 0
@@ -210,7 +210,7 @@ void log_hdr(FILE *out)
 	             ",\"o-o.myaddr.l.google.com TXT\""
 	             ",\"whoami.akamai.net A\""
 		     ",\"ripe-hackathon6.nlnetlabs.nl AAAA\",\"can_ipv6\""
-		     ",\"can_tcp\",\"cap_tcp6\",\"ecs_mask\",\"does_ecs\""
+		     ",\"can_tcp\",\"cap_tcp6\",\"ecs_mask\",\"ecs_mask6\",\"does_ecs\""
 		     ",\"does_qnamemin\",\"doesnt_qnamemin\"");
 	for ( i = 0
 	    ; i < sizeof(rec.hijacked) / sizeof(rec.hijacked[0])
@@ -337,6 +337,8 @@ void process_whoami_g(dnst_rec *rec, uint8_t *msg, size_t msg_len)
 	rrset_spc   rrset_spc;
 	rrset      *rrset;
 	rrtype_iter rr_spc, *rr;
+	int af = -1;
+	int mask = 0;
 
 	if (RCODE_WIRE(msg) != RCODE_NOERROR
 	|| !(rrset = rrset_answer(&rrset_spc, msg, msg_len))
@@ -371,17 +373,35 @@ void process_whoami_g(dnst_rec *rec, uint8_t *msg, size_t msg_len)
 					continue;
 				memcpy(strbuf, slash, numlen);
 				strbuf[numlen] = '\0';
-
-				rec->ecs_mask = atoi(strbuf);
+				mask = atoi(strbuf);
 				continue;
 			}
 			if (txt_len > sizeof(strbuf) - 1)
 				continue;
 			memcpy(strbuf, rdata, txt_len);
 			strbuf[txt_len] = '\0';
-			inet_pton(AF_INET, strbuf, rec->whoami_g);
+			if (strchr(strbuf, ':'))
+				inet_pton((af = AF_INET6), strbuf, rec->whoami_6);
+			else
+				inet_pton((af = AF_INET ), strbuf, rec->whoami_g);
 		}
 	}
+#if 1
+	rec->ecs_mask6 = mask >  32 ? mask : 0;
+	rec->ecs_mask  = mask <= 32 ? mask : 0;
+#else
+	switch (af) {
+	case AF_INET : rec->ecs_mask  = mask;
+		       rec->ecs_mask6 = 0;
+		       break;
+	case AF_INET6: rec->ecs_mask  = 0;
+		       rec->ecs_mask6 = mask;
+		       break;
+	default      : rec->ecs_mask  = 0;
+		       rec->ecs_mask6 = 0;
+		       break;
+	}
+#endif
 }
 
 void process_whoami_a(dnst_rec *rec, uint8_t *msg, size_t msg_len)
@@ -469,7 +489,7 @@ void process_tcp4(dnst_rec *rec, uint8_t *msg, size_t msg_len)
 	&&  rr->rr_i.rr_type + 14 <= rr->rr_i.pkt_end
 	&&  READ_U16(rr->rr_i.rr_type + 8) == 4) {
 		rec->tcp_ipv4 = CAP_CAN;
-		if (memcmp(rec->whoami_a, zeros, 4) == 0)
+		/* if (memcmp(rec->whoami_a, zeros, 4) == 0) */
 			memcpy(rec->whoami_a, rr->rr_i.rr_type + 10, 4);
 	} else	rec->tcp_ipv4 = CAP_CANNOT;
 }
@@ -489,7 +509,7 @@ void process_tcp6(dnst_rec *rec, uint8_t *msg, size_t msg_len)
 	&&  rr->rr_i.rr_type + 26 <= rr->rr_i.pkt_end
 	&&  READ_U16(rr->rr_i.rr_type + 8) == 16) {
 		rec->tcp_ipv6 = CAP_CAN;
-		if (memcmp(rec->whoami_6, zeros, 16) == 0)
+		/* if (memcmp(rec->whoami_6, zeros, 16) == 0) */
 			memcpy(rec->whoami_6, rr->rr_i.rr_type + 10, 16);
 	} else	rec->tcp_ipv6 = CAP_CANNOT;
 }
@@ -510,10 +530,11 @@ void process_not_ta_19036(dnst_rec *rec, uint8_t *msg, size_t msg_len)
 	&&  rr->rr_i.rr_type[12] ==  20 &&  rr->rr_i.rr_type[13] ==  17) {
 
 		rec->not_ta_19036 = CAP_DOES;
+		rec->has_ta_19036 = CAP_UNKNOWN;
 	} else {
 		rec->not_ta_19036 = CAP_DOESNT;
-		if (rec->dnskey_alg[5] == CAP_DOES)
-			rec->has_ta_19036 = CAP_DOES;
+		rec->has_ta_19036 = rec->dnskey_alg[5] == CAP_DOES
+		                  ? CAP_DOES : CAP_UNKNOWN;
 	}
 }
 
@@ -532,13 +553,44 @@ void process_not_ta_20326(dnst_rec *rec, uint8_t *msg, size_t msg_len)
 	&&  rr->rr_i.rr_type[12] ==  20 &&  rr->rr_i.rr_type[13] ==  17) {
 
 		rec->not_ta_20326 = CAP_DOES;
-		if (rec->dnskey_alg[5] == CAP_DOES
-		&&  rec->has_ta_19036  == CAP_DOES)
-			rec->has_ta_20326 = CAP_DOESNT;
+		rec->has_ta_20326 =
+		    (  rec->has_ta_19036 == CAP_DOES     /* support */
+		    && rec->is_ta_20326  != CAP_DOESNT ) /* no contradiction */
+		    ?  CAP_DOESNT : CAP_UNKNOWN;
 	} else {
 		rec->not_ta_20326 = CAP_DOESNT;
-		if (rec->dnskey_alg[5] == CAP_DOES)
-			rec->has_ta_20326 = CAP_DOES;
+		rec->has_ta_20326 =
+		    (  rec->has_ta_19036 == CAP_DOES     /* support */
+		    && rec->is_ta_20326  != CAP_DOES )   /* no contradiction */
+		    ?  CAP_DOES   : CAP_UNKNOWN;
+	}
+}
+
+void process_is_ta_20326(dnst_rec *rec, uint8_t *msg, size_t msg_len)
+{
+	rrset_spc   rrset_spc;
+	rrset      *rrset;
+	rrtype_iter rr_spc, *rr;
+
+	if (RCODE_WIRE(msg) == RCODE_NOERROR
+	&& (rrset = rrset_answer(&rrset_spc, msg, msg_len))
+	&&  rrset->rr_type == RRTYPE_A
+	&& (rr = rrtype_iter_init(&rr_spc, rrset))
+	&& (rr->rr_i.rr_type + 14 <= rr->rr_i.pkt_end)
+	&&  rr->rr_i.rr_type[10] == 145 &&  rr->rr_i.rr_type[11] ==  97
+	&&  rr->rr_i.rr_type[12] ==  20 &&  rr->rr_i.rr_type[13] ==  17) {
+
+		rec->is_ta_20326  = CAP_DOES;
+		rec->has_ta_20326 =
+		    (  rec->has_ta_19036 == CAP_DOES     /* support */
+		    && rec->not_ta_20326 != CAP_DOES )   /* no contradiction */
+		    ?  CAP_DOES   : CAP_UNKNOWN;
+	} else {
+		rec->is_ta_20326  = CAP_DOESNT;
+		rec->has_ta_20326 =
+		    (  rec->has_ta_19036 == CAP_DOES     /* support */
+		    && rec->not_ta_20326 != CAP_DOESNT ) /* no contradiction */
+		    ?  CAP_DOESNT : CAP_UNKNOWN;
 	}
 }
 
@@ -674,6 +726,9 @@ void process_dnst(dnst *d, unsigned int msm_id)
 	case 15283671: /* root-key-sentinel-not-ta-20326.d2a8n3.rootcanary.net A */
 		process_not_ta_20326(rec, dnst_msg(d), d->len);
 		break;
+	case 16430285: /* root-key-sentinel-is-ta-20326.d2a8n3.rootcanary.net A */
+		process_is_ta_20326(rec, dnst_msg(d), d->len);
+		break;
 	default:
 		fprintf(stderr, "Unknown msm_id: %u\n", msm_id);
 		return;
@@ -705,6 +760,10 @@ int main(int argc, const char **argv)
 	dnst_rec_node *rec_node = NULL;
 
 	assert(sizeof(dnst_rec) == sizeof(dnst_rec_node) -
+	    ((uint8_t *)&rec_node->rec - (uint8_t *)rec_node));
+	fprintf(stderr, "sizeof(dnst_rec)        = %zu\n", sizeof(dnst_rec));
+	fprintf(stderr, "sizeof(dnst_rec_node)   = %zu\n", sizeof(dnst_rec_node));
+	fprintf(stderr, "offset dnst_rec in node = %zu\n",
 	    ((uint8_t *)&rec_node->rec - (uint8_t *)rec_node));
 
 	memset((void *)&start, 0, sizeof(struct tm));

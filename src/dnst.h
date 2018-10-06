@@ -107,6 +107,10 @@ typedef struct dnst_rec {
 	unsigned has_ta_19036: 2;     /*     inferred */
 	unsigned has_ta_20326: 2;     /*     inferred */
 
+	unsigned  is_ta_20326: 2;     /*     16430285 */
+
+	uint8_t         ecs_mask6   ; /*     inferred */
+
 	uint32_t      align;
 } dnst_rec;
 
@@ -144,6 +148,8 @@ typedef struct cap_counter {
 	rbtree_type auth_asn_counts;
 	rbtree_type ecs_masks;
 	rbtree_type ecs_counts;
+	rbtree_type ecs6_masks;
+	rbtree_type ecs6_counts;
 
 	cap_counters res;
 	cap_counters prbs;

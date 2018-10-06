@@ -88,6 +88,8 @@ void cap_counter_init(cap_counter *cap)
 	rbtree_init(&cap->auth_asn_counts, asn_countcmp);
 	rbtree_init(&cap->ecs_masks, ecs_maskcmp);
 	rbtree_init(&cap->ecs_counts, ecs_countcmp);
+	rbtree_init(&cap->ecs6_masks, ecs_maskcmp);
+	rbtree_init(&cap->ecs6_counts, ecs_countcmp);
 }
 
 static void rbnode_free(rbnode_type *node, void *ignore)
@@ -99,6 +101,7 @@ void reset_cap_counter(cap_counter *cap)
 	traverse_postorder(&cap->res_asns, rbnode_free, NULL);
 	traverse_postorder(&cap->auth_asns, rbnode_free, NULL);
 	traverse_postorder(&cap->ecs_masks, rbnode_free, NULL);
+	traverse_postorder(&cap->ecs6_masks, rbnode_free, NULL);
 	cap_counter_init(cap);
 }
 
@@ -111,7 +114,7 @@ static uint8_t cd_get_ipv6(dnst_rec *rec)
 static uint8_t cd_get_tcp(dnst_rec *rec)          { return rec->tcp_ipv4; }
 static uint8_t cd_get_tcp6(dnst_rec *rec)         { return rec->tcp_ipv6; }
 static uint8_t cd_get_ecs(dnst_rec *rec)
-{ return rec->ecs_mask ? CAP_DOES : CAP_UNKNOWN; }
+{ return (rec->ecs_mask || rec->ecs_mask6) ? CAP_DOES : CAP_UNKNOWN; }
 static uint8_t cd_get_internal(dnst_rec *rec)
 {
 	int Z_asn1 = -1, Z_asn2 = -1, Z_asn6 = -1;
@@ -347,7 +350,7 @@ void count_cap(cap_counter *cap, dnst_rec *rec)
 		has_ipv6 = CAP_CAN;
 	cap->res.has_ipv6[has_ipv6]++;
 
-	if (rec->ecs_mask != 0)
+	if ((rec->ecs_mask || rec->ecs_mask6))
 		cap->res.does_ecs[CAP_DOES]++;
 
 	if (!cap->auth_asns.cmp)
@@ -459,6 +462,17 @@ void count_cap(cap_counter *cap, dnst_rec *rec)
 			e->ec.count = 1;
 			e->byecs_mask.key = &e->ec.ecs_mask;
 			rbtree_insert(&cap->ecs_masks, &e->byecs_mask);
+		}
+	}
+	if (rec->ecs_mask6) {
+		if ((e = (void *)rbtree_search(&cap->ecs6_masks, &rec->ecs_mask6)))
+			e->ec.count++;
+
+		else if ((e = calloc(1, sizeof(ecs_mask_counter)))) {
+			e->ec.ecs_mask = rec->ecs_mask6;
+			e->ec.count = 1;
+			e->byecs_mask.key = &e->ec.ecs_mask;
+			rbtree_insert(&cap->ecs6_masks, &e->byecs_mask);
 		}
 	}
 }
@@ -575,6 +589,24 @@ static void cap_log(FILE *f, cap_counter *cap)
 	}
 	fprintf(f,",%zu",remain);
 
+	RBTREE_FOR(e, ecs_mask_counter *, &cap->ecs6_masks) {
+		e->bycount.key = &e->ec.count;
+		rbtree_insert(&cap->ecs6_counts, &e->bycount);
+	}
+	i = 0;
+	remain = 0;
+	RBTREE_FOR(n, rbnode_type *, &cap->ecs6_counts) {
+		const ecs_mask_count *ec = n->key;
+		if (i++ < n_ecs_masks)
+			fprintf(f,",%" PRIu8 ",%zu", ec->ecs_mask, ec->count);
+		else	remain += ec->count;
+	}
+	while (i < n_ecs_masks) {
+		fprintf(f,",0,0");
+		i++;
+	}
+	fprintf(f,",%zu",remain);
+
 	RBTREE_FOR(c, asn_counter *, &cap->prb_asns) {
 		c->bycount.key = &c->ac.count;
 		rbtree_insert(&cap->prb_asn_counts, &c->bycount);
@@ -609,6 +641,10 @@ void cap_hdr(FILE *f)
 		fprintf(f,",\"ECS mask #%zu\",\"ECS mask #%zu count\"", (i+1), (i+1));
 	}
 	fprintf(f,",\"Remaining ECS mask count\"");
+	for (i = 0; i < n_ecs_masks; i++) {
+		fprintf(f,",\"ECS mask6 #%zu\",\"ECS mask6 #%zu count\"", (i+1), (i+1));
+	}
+	fprintf(f,",\"Remaining ECS mask6 count\"");
 	for (i = 0; i < n_asns; i++) {
 		fprintf(f,",\"probe #%zu total\",\"probe #%zu ASNs\"", (i+1), (i+1));
 	}

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
-from datetime import *
+import time
+from datetime import datetime, date, timedelta
 import matplotlib
 import sys
 matplotlib.use('Agg')
@@ -8,6 +9,7 @@ import matplotlib.pyplot as pp
 import matplotlib.patches as mpatches
 import matplotlib.dates as mpd
 import pandas as pd
+import cPickle
 
 def darken(color):
 	return '#%.2X%.2X%.2X' % ( int(color[1:3], 16) / 1.25
@@ -49,22 +51,79 @@ class Prop(object):
 		return [p + '_' + self.col_name for p, l in self.prop][:self.size]
 	def labs(self):
 		return [l + ' ' + self.lab_name for p, l in self.prop][:self.size]
+	def pie_labs(self):
+		return self.labs()
 	def colors(self):
 		return ['#7DB874', '#E39C37', '#D92120'][:self.size]
+	def pie_colors(self):
+		return self.colors()
 	
 	def register_plot(self, fn):
 		self.plot_fns.append(fn)
 	
-	def register_with_index(self, ind):
+	def register_with_index(self, ind, no_data = False):
+		xtra = ''
+		if no_data:
+			xtra = 'No data<br />'
+
+		elif self.dt_ts[0] == self.dt_ts[-1]:
+			xtra = 'Data from %s<br />' % self.dt_ts[0].ctime()
+
 		ind.add_plots( self.title
 		             , self.col_name
-		             , ''.join([ '<img src="%s" />' % fn.split('/')[-1]
-		                         for fn in self.plot_fns ]))
-	
+		             , xtra + ''.join([ '<img src="%s" />' % fn.split('/')[-1]
+		                         for fn in self.plot_fns ])
+			     )
+
 	def plot_more(self, ax):
 		pass;
 
+	def do_pie_plot(self, fn, data, unknown = None, labels = None, colors = None):
+		fig, ax = pp.subplots(1, 1, figsize=(4.5, 4.5))
+		if unknown:
+			data += [unknown]
+			ax.pie(data, colors = self.colors() + ['#CCCCCC'], shadow = False)
+		else:
+			ax.pie(data, colors = self.colors(), shadow = False)
+		ax.axis('equal')
+
+		plot_patches = []
+		if not labels:
+			labels = self.pie_labs()
+		if not colors:
+			colors = self.pie_colors()
+		if unknown:
+			labels += ['unknown']
+			colors += ['#CCCCCC']
+		i = 0
+		for label in labels:
+			plot_patches.append(mpatches.Patch(color = colors[i]))
+			i += 1
+
+		pct_labels = ['%s (%1.1f%%)' % (label, pct) for label, pct in zip(labels, [float(100*n) / float(sum(data)) for n in data])]
+
+		ax.legend(plot_patches[::-1], pct_labels[::-1]
+		         , ncol=(2 if len(pct_labels) > 3 else 1)
+			 , loc='lower right')
+
+		fn_split = fn.split('.')
+		fn_ext   = fn_split[-1]
+		fn_base  = '.'.join(fn_split[:-1])
+		pie_fn = fn_base + '_pie.' + fn_ext
+		pp.savefig(pie_fn)
+		pp.close()
+		self.register_plot(pie_fn)
+
 	def do_plot(self, dt_ts, data_ts, fn, data_ts_prbs = None):
+		global n_resolvers
+
+		unknown_ts = [ row[0] - sum(row[1:]) 
+		               for row in zip(n_resolvers[len(n_resolvers)-len(dt_ts):], *data_ts)]
+		if dt_ts[0] == dt_ts[-1]:
+			self.dt_ts = dt_ts
+			self.do_pie_plot(fn, [v[-1] for v in data_ts], unknown_ts[-1])
+			return
+
 		fig, ax = pp.subplots(figsize=(8, 4.5))
 
 		if len(dt_ts) > 270:
@@ -80,7 +139,7 @@ class Prop(object):
 		else:
 			ax.xaxis.set_major_formatter(mpd.DateFormatter('%Y-%m-%d'))
 
-		ax.stackplot(dt_ts, data_ts, colors = self.colors())
+		ax.stackplot(dt_ts, data_ts + [unknown_ts], colors = self.colors() + ['#CCCCCC'])
 		ax.set_xlim(dt_ts[0], dt_ts[-1])
 
 		self.dt_ts = dt_ts
@@ -98,7 +157,7 @@ class Prop(object):
 				ax.plot(dt_ts, col_prbs, color = color)
 				i += 1
 		ax.legend( colors[::-1]
-			 , labels[::-1]
+			 , [label.decode('utf-8') for label in labels[::-1]]
 			 , ncol=1, loc='upper left')
 		ax.set_ylabel('Probe/resolver pairs')
 		
@@ -106,12 +165,19 @@ class Prop(object):
 		pp.savefig(fn)
 		pp.close()
 		self.register_plot(fn)
+		self.do_pie_plot(fn, [v[-1] for v in data_ts], unknown_ts[-1])
 
 	def plot(self, dt_ts, csv, ind):
 		data_ts = [csv[col].values for col in self.cols()]
 		for offset in range(len(dt_ts)):
 			if sum([ts[offset] for ts in data_ts]) > 0:
 				break;
+		try:
+			offset
+		except NameError:
+			self.register_with_index(ind, no_data = True)
+			return
+
 		data_ts_prbs = [csv[col + '_prbs'].values[offset:] for col in self.cols()]
 
 		self.csv    = csv
@@ -158,7 +224,10 @@ class IntProp(Prop):
 	def labs(self):
 		return ['internal', 'forwarding', 'external']
 	def colors(self):
-		return ['#993399', '#339999', '#999933']
+		return ['#CC66CC', '#66CCCC', '#CCCC66']
+
+def asn_label(asn):
+	return asns.get(asn, (asn, asn))[1]
 
 class TopASNs(Prop):
 	def __init__(self, asn_type):
@@ -166,7 +235,7 @@ class TopASNs(Prop):
 		self.labels = None
 		super(TopASNs, self).__init__(
 		    ( 'Top %d %sASNs'
-		    % ( len(self.colors()) - 1
+		    % ( len(self.colors())
 		      , 'Probe ' if asn_type == 'probe' else
 		        'Resolver ' if asn_type == 'resolver' else
 		        'Authoritative ' if asn_type == 'auth' else '' )),
@@ -174,9 +243,11 @@ class TopASNs(Prop):
 
 	def labs(self):
 		return self.labels
+	def pie_labs(self):
+		return self.pie_labels
 	def colors(self):
 		return [ '#CC9966', '#CC6699', '#99CC66', '#9966CC', '#66CC99', '#6699CC'
-		       , '#33CC99', '#3399CC', '#CC3399', '#CC9933'#, '#9933CC', '#99CC33'
+		       , '#33CC99', '#3399CC', '#CC3399'#, '#CC9933', '#9933CC', '#99CC33'
 		       , '#999999'][:(len(self.labels)
 		                       if self.labels is not None else 999999)]
 	def plot(self, dt_ts, csv, ind):
@@ -245,21 +316,26 @@ class TopASNs(Prop):
 			i += 1
 
 		data_ts = [list(ts) for ts in zip(*data_ts)]
+		self.pie_labels = [asn for asn in self.labels]
+		self.labels = [asn_label(asn) for asn in self.labels]
 		self.do_plot( dt_ts[offset:], data_ts
 			    , ind.path + '/' + self.col_name + '.svg' )
 		self.register_with_index(ind)
 
 class TopECSMasks(Prop):
-	def __init__(self):
+	def __init__(self, af = ''):
+		self.af = af = str(af)
+		if af == '4': self.af = ''
 		self.labels = None
 		super(TopECSMasks, self).__init__(
-		    'Top EDNS Client Subnet masks', 'ecs_masks', 'ECS Masks')
+		    ('Top IPv%s EDNS Client Subnet masks' % ('6' if af == '6' else '4')),
+		    'ecs_masks'+af, 'ECS Masks'+af)
 
 	def labs(self):
 		return self.labels
 	def colors(self):
 		return [ '#CC9966', '#CC6699', '#99CC66', '#9966CC', '#66CC99', '#6699CC'
-		       , '#33CC99'#, '#3399CC', '#CC3399', '#CC9933', '#9933CC', '#99CC33'
+		       , '#33CC99', '#3399CC', '#CC3399', '#CC9933', '#9933CC', '#99CC33'
 		       , '#999999'][:(len(self.labels)
 		                       if self.labels is not None else 999999)]
 	def plot(self, dt_ts, csv, ind):
@@ -273,10 +349,10 @@ class TopECSMasks(Prop):
 			return '';
 
 		ecs_totals = dict()
-		masks = [ zip( csv['ECS mask #%d'       % mask].values[offset:]
-		             , csv['ECS mask #%d count' % mask].values[offset:])
+		masks = [ zip( csv['ECS mask%s #%d'       % (self.af,mask)].values[offset:]
+		             , csv['ECS mask%s #%d count' % (self.af,mask)].values[offset:])
 		          for mask in range(1,10) ]
-		rem   = csv['Remaining ECS mask count'].values[offset:]
+		rem   = csv['Remaining ECS mask%s count' % self.af].values[offset:]
 		masks+= [zip([-1] * len(rem), rem)]
 		for mask_counts in masks:
 			i = 0
@@ -289,11 +365,16 @@ class TopECSMasks(Prop):
 				ecs_totals[mask] += count
 				i += 1
 
-		top = sorted( [ (tot, ecs) for ecs, tot in ecs_totals.items()]
+		top = sorted( [ (tot, ecs) for ecs, tot in ecs_totals.items()
+		                           if  ecs > 0 and tot > 0 ]
 		            , reverse = True)
 		size = len(self.colors())
-		self.labels = [ecs for tot, ecs in top][:size-1]
-		self.labels += ['Remaining']
+		if len(top) < size:
+			self.size = size = len(top)
+			self.labels = [ecs for tot, ecs in top][:size]
+		else:
+			self.labels = [ecs for tot, ecs in top][:size-1]
+			self.labels += ['Remaining']
 		data_ts = list()
 		i = 0
 		for row in zip(*masks):
@@ -326,9 +407,9 @@ class TAProp(HasProp):
 		    'ta_20326' , '. KSK 20326')
 	
 	def colors(self):
-		return super(TAProp, self).colors() + ['#000000']
+		return super(TAProp, self).colors()
 	def labs(self):
-		return super(TAProp, self).labs() + ['has . KSK 19036']
+		return super(TAProp, self).labs()
 	def plot_more(self, ax):
 		has_19036 = self.csv['has_ta_19036'].values
 		if len(has_19036) > len(self.dt_ts):
@@ -336,17 +417,16 @@ class TAProp(HasProp):
 		ax.plot(self.dt_ts, has_19036, color = '#000000')
 
 def create_plots(fn):
-	props = [ CanProp   ('IPv6', 'ipv6'     , 'IPv6'       , 1)
-		, CanProp   ('TCP' , 'tcp'      , 'TCP'        , 1)
-		, CanProp   ('TCP6', 'tcp6'     , 'TCP6'       , 1)
-		, DoesProp  ('Non existant domain hijacking', 'nxdomain' , 'NX hijacking', 2)
-		, DoesProp  ('Qname Minimization', 'qnamemin' , 'qnamemin'   , 2)
-		, DoesProp  ('ENDS Client Subnet', 'ecs'      , 'EDNS Client Subnet', 1)
-		, TopECSMasks()
-                , IntProp()
+	global  csv, n_probes, n_resolvers, ts_series, p_t, t_t
+	props = [ IntProp()
 		, TopASNs   ('auth')
 		, TopASNs   ('resolver')
 		, TopASNs   ('probe')
+		, DoesProp  ('Qname Minimization', 'qnamemin' , 'qnamemin'   , 2)
+		, DoesProp  ('ENDS Client Subnet', 'ecs'      , 'EDNS Client Subnet', 1)
+		, TopECSMasks()
+		, TopECSMasks(6)
+		, DoesProp  ('Non existant domain hijacking', 'nxdomain' , 'NX hijacking', 2)
 	        , TAProp()
 		, DNSKEYProp('ed448'    , 'ED448')
 		, DNSKEYProp('ed25519'  , 'ED25519')
@@ -362,23 +442,39 @@ def create_plots(fn):
 		, DNSKEYProp('rsamd5'   , 'RSA-MD5')
 		, DSProp    ('gost'     , 'GOST DS')
 		, DSProp    ('sha384'   , 'SHA-384 DS')
+		, CanProp   ('IPv6', 'ipv6'     , 'IPv6'       , 1)
+		, CanProp   ('TCP' , 'tcp'      , 'TCP'        , 1)
+		, CanProp   ('TCP6', 'tcp6'     , 'TCP6'       , 1)
+
 		]
 
-	report_csv  = pd.read_csv(fn)
+	csv         = pd.read_csv(fn)
+	n_probes    = csv['# probes']
+	n_resolvers = csv['# resolvers']
 
 	ts_series   = [ datetime.strptime(iso_dt, '%Y-%m-%dT%H:%M:%SZ')
-		        for iso_dt in report_csv['datetime'].values ]
+		        for iso_dt in csv['datetime'].values ]
 
 	path = '/'.join(fn.split('/')[:-1])
 	path = path if path else '.'
 	page = Index(path, 'DNSThought')
 	for prop in props:
-		prop.plot(ts_series, report_csv, page)
+#for prop in [TopASNs   ('auth') , TopASNs   ('resolver') , TopASNs   ('probe')]:
+		prop.plot(ts_series, csv, page)
+		t = time.time()
+		t_t += (t - p_t)
+		print('t: %7.4f %7.4f' % (t - p_t, t_t))
+		p_t = t
 	page.save()
 
 if __name__ == '__main__':
+	global p_t, t_t
+	t_t = 0
+	p_t = time.time()
 	if len(sys.argv) != 2:
 		print('usage: %s <report.csv>' % sys.argv[0])
 		sys.exit(1)
 	
+	with open('/'.join(sys.argv[0].split('/')[:-1] + ['asns.cPickle'])) as o:
+		asns = cPickle.load(o)
 	create_plots(sys.argv[1])
