@@ -111,7 +111,7 @@ typedef struct dnst_rec {
 
 	uint8_t         ecs_mask6   ; /*     inferred */
 
-	uint32_t      align;
+	uint32_t asn_info;
 } dnst_rec;
 
 typedef struct dnst_rec_node {
@@ -146,6 +146,8 @@ typedef struct cap_counter {
 	rbtree_type res_asn_counts;
 	rbtree_type auth_asns;
 	rbtree_type auth_asn_counts;
+	rbtree_type nxhj_asns;;
+	rbtree_type nxhj_asn_counts;
 	rbtree_type ecs_masks;
 	rbtree_type ecs_counts;
 	rbtree_type ecs6_masks;
@@ -153,6 +155,12 @@ typedef struct cap_counter {
 
 	cap_counters res;
 	cap_counters prbs;
+
+	size_t       prb_ids_sz;
+	uint32_t    *prb_ids;
+
+	size_t       reses_sz;
+	dnst_rec**   reses;
 } cap_counter;
 
 typedef struct probe_counter {
