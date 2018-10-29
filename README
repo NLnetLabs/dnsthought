@@ -15,6 +15,7 @@ Bootstrapping & Compiling
 
 ```
 cd `/home/hackathon/dnsthought/dnst-processing
+git submodule update --init
 autoreconf -vfi
 ./configure
 (cd src; make mk_asn_tables)
