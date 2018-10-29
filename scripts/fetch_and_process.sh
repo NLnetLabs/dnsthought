@@ -52,9 +52,14 @@ EOM
 		PREV_TIME=$CUR_TIME
 	done
 done
-cd ${DNSTHOUGHT_HOME}/processed2
+cd ${DNSTHOUGHT_HOME}/processed7
 while nice -n 20 ./process.sh
 do
 	sleep 1
 done
-
+cd ${DNSTHOUGHT_HOME}/daily8
+../mkmakefile.sh
+time nice -n 20 make -j 7
+#time nice -n 20 make -j 7 auth_ASN_details
+#time nice -n 20 make -j 7 res_ASN_details
+#time nice -n 20 make -j 7 prb_ASN_details
