@@ -16,7 +16,8 @@ Bootstrapping & Compiling
 ```
 cd `/home/hackathon/dnsthought/dnst-processing
 autoreconf -vfi
-make src/mk_asn_tables
+./configure
+(cd src; make mk_asn_tables)
 scripts/get_probes.py
 scripts/get_pfx2as.py
 scripts/get_asns.py

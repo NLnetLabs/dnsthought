@@ -1,6 +1,7 @@
 bin_PROGRAMS = atlas2dnst iter_dnsts cap_counter mk_asn_tables lookup_asn lookup_probe sort_dnst
+AM_CFLAGS = -Ijsmn
 
-atlas2dnst_SOURCES = atlas2dnst.c jsmn.c
+atlas2dnst_SOURCES = atlas2dnst.c jsmn/jsmn.c
 sort_dnst_SOURCES = sort_dnst.c
 iter_dnsts_SOURCES = iter_dnsts.c rbtree.c rr-iter.c
 cap_counter_SOURCES= cap_counter.c table4.c table6.c ranges.c rbtree.c probes.c
