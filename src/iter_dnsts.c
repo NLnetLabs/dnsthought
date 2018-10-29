@@ -14,7 +14,6 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
-#include <getdns/getdns_extra.h>
 
 static int quiet = 0;
 
