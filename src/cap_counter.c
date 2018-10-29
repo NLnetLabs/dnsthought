@@ -341,7 +341,7 @@ void cap_res_count(cap_counter *cap, dnst_rec *rec)
 void count_cap(cap_counter *cap, dnst_rec *rec)
 {
 	size_t i;
-	int Z_asn1 = -1, Z_asn2 = -1, Z_asn6 = -1, asn = 1, has_ipv6 = 0;
+	int Z_asn1 = -1, Z_asn2 = -1, Z_asn6 = -1, asn = -1, has_ipv6 = 0;
 	asn_counter *c;
 	ecs_mask_counter *e;
 	probe *X = NULL;
@@ -413,8 +413,7 @@ void count_cap(cap_counter *cap, dnst_rec *rec)
 		Y_asn    = asn_info[rec->asn_info].res;
 		nxhj_asn = asn_info[rec->asn_info].nxhj;
 	}
-	X_asn = X == NULL ? -1
-	      : X_asn_v4 > 0 ? X_asn_v4
+	X_asn = X_asn_v4 > 0 ? X_asn_v4
 	      : X_asn_v6 > 0 ? X_asn_v6 : -1;
 	if (Y_asn == 0)
 		Y_asn = X_asn;
@@ -425,6 +424,9 @@ void count_cap(cap_counter *cap, dnst_rec *rec)
 		asn = Z_asn2;
 	else if (Z_asn6 > 0)
 		asn = Z_asn6;
+	else if (Z_asn1 == 0 || Z_asn2 == 0 || Z_asn6 == 0)
+		asn = 0;
+
 	if (asn > 0) {
 		/* X = configured ASN of probe
 		 * Y = configured resolver ASN (private address space etc.)

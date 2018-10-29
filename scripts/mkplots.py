@@ -9,6 +9,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as pyplot
 import matplotlib.pyplot as pp
 import matplotlib.patches as mpatches
+import matplotlib.lines as mlines
 import matplotlib.dates as mpd
 import pandas as pd
 import cPickle
@@ -77,7 +78,7 @@ cap_names = \
 	, 'hasnt_ta_20326' : ( 8, 'do <b>not</b> have root KSK 20326 (but <b>do</b> have root KSK sentinel support)')
 	, 'can_rsamd5'     : (20, 'validate DNSKEY algorithm RSAMD5')
 	, 'cannot_rsamd5'  : (20, 'do <b>not</b> validate DNSKEY algorithm RSAMD5')
-	, 'broken_rsamd5'  : (20, 'Hhve broken DNSKEY algorithm RSAMD5 validation support')
+	, 'broken_rsamd5'  : (20, 'have broken DNSKEY algorithm RSAMD5 validation support')
 	, 'can_dsa'        : (21, 'validate DNSKEY algorithm DSA')
 	, 'cannot_dsa'     : (21, 'do <b>not</b> validate DNSKEY algorithm DSA')
 	, 'broken_dsa'     : (21, 'have broken DNSKEY algorithm DSA validation support')
@@ -457,8 +458,13 @@ class Prop(object):
 			i = 0
 			for col_prbs in data_ts_prbs:
 				color = darken(self.colors()[i])
-				colors.append(mpatches.Patch(color = color))
-				label = 'probes that ' + labels[i]
+				colors.append(mlines.Line2D([], [], color = color))
+				if labels[i].startswith('do') or \
+				   labels[i].startswith('can') or \
+				   labels[i].startswith('have'):
+					label = 'probes that ' + labels[i]
+				else:
+				 	label = 'probes with ' + labels[i]
 				labels.append(label)
 				ax.plot(dt_ts, col_prbs, color = color)
 				i += 1
@@ -606,7 +612,8 @@ class TopASNs(Prop):
 					asn_totals[asn] += total / len(ASNs)
 				i += 1
 
-		top = sorted( [(tot, asn) for asn, tot in asn_totals.items()]
+		top = sorted( [ (tot, asn) for asn, tot in asn_totals.items()
+		                           if asn != 'AS-1' ]
 		            , reverse = True)
 
 		size = self.size
