@@ -1,3 +1,6 @@
+#define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE
+#include <time.h>
 #include "config.h"
 #include "dnst.h"
 #include "rr-iter.h"
@@ -12,7 +15,6 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <time.h>
 #include <unistd.h>
 
 static int quiet = 0;
@@ -871,7 +873,7 @@ int main(int argc, const char **argv)
 			fprintf(stderr, "Could not open '%s'\n", res_fn);
 
 		else RBTREE_FOR(rec_node, dnst_rec_node *, &recs) {
-			write(res_fd, &rec_node->rec, sizeof(dnst_rec));
+			assert(write(res_fd, &rec_node->rec, sizeof(dnst_rec) == sizeof(dnst_rec)));
 		}
 		if (res_fd != -1)
 			close(res_fd);

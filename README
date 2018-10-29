@@ -1,0 +1,71 @@
+Prerequisites
+=============
+  - `py27-matplotlib`
+
+Directory setup
+===============
+We are assuming this repository to be checked out in `/home/hackathon/dnsthought/dnst-processing`.
+Atlas measurements are collected in `/home/hackathon/dnsthought/atlas`
+Measurements are sorted and then processed in `/home/hackathon/dnsthought/processed7`
+Web-pages are created and written to `/home/hackathon/dnsthought/daily8`
+For alternative directories edit `scripts/fetch_and_process.sh`, `scripts/fix_results.sh` and `scripts/process.sh`
+
+Bootstrapping & Compiling
+=========================
+
+```
+cd `/home/hackathon/dnsthought/dnst-processing
+autoreconf -vfi
+make src/mk_asn_tables
+scripts/get_probes.py
+scripts/get_pfx2as.py
+scripts/get_asns.py
+make
+```
+
+Fetching atlas measurement data
+===============================
+
+Setting up directories:
+-----------------------
+```
+# Create directories for the raw Atlas msm data per day in dnst format
+# dnst format is a sequence of struct dnst
+#
+(	mkdir -p /home/hackathon/dnsthought/atlas
+ 	cd /home/hackathon/dnsthought/atlas
+	mkdir 15283670 15283671 16430285 8310237 8310245 8310250 8310360 8310364 8310366 8311777 8926853 8926854 8926855 8926856 8926857 8926858 8926859 8926860 8926861 8926862 8926863 8926864 8926865 8926866 8926867 8926868 8926869 8926870 8926871 8926872 8926873 8926874 8926875 8926876 8926887 8926888 8926911 8926912
+)
+# Create directory for processed data
+#
+mkdir /home/hackathon/dnsthought/processed7
+cp -p $BUILDDIR/scripts/process.sh /home/hackathon/dnsthought/processed7
+
+# Create directory for www data
+#
+mkdir /home/hackathon/dnsthought/daily8
+```
+
+Fetching all data:
+------------------
+```
+$BUILDDIR/scripts/fetch_and_process.sh
+```
+
+This should be scheduled daily (shortly after 00:00 UTC) in a cron job.
+
+
+Programs involved in fetching:
+==============================
+  - `src/mk_asn_tables` create `src/table4.c` and `src/table6.c` from routviews files.
+  - `scripts/get_daily_results.py` fetches atlas msm results in json format for given measurement IDs.  The  measurement IDs should be existing directories in the current directory.  The most recent day is fetched.  If that already exists then an earlier day is fetched.  If that already exists then an earlier day is fetched.  Exits something other that 0 is there is nothing more to fetch.
+  - `src/atlas2dnst` converts json to `.dnst` format (a sequence of `struct dnst`)
+  - `src/sort_dnst` puts all `struct dnst` records in a `.dnst` file in chronological order
+
+Programs involved in processing:
+================================
+  - `src/iter_dnsts` parses `dnst` files and creates timeseries of capabilities/properties per probe/resolver combination in CSV files.  Summaries are written to `.res` files.
+  - `src/cap_counter` parses `.res` files and outputs `report.csv` files in the web directory
+  - `script/mkmakefile.sh` supposed to run from the web directory (`/home/hackathon/dnsthought/daily8`) and creates a Makefile for generating plots and pages
+  - `script/scripts/mkplots.py` Produces plots and `index.html` pages for collected capabilities/properties.
+

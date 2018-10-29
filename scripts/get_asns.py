@@ -2,6 +2,7 @@
 
 import requests
 import cPickle
+import sys
 
 asns = dict()
 for page in ( 'list-of-autonomous-system-numbers'
@@ -16,6 +17,6 @@ for page in ( 'list-of-autonomous-system-numbers'
 	                                     .split('</pre>')[0]
 	                                     .split('<br />')]))
 
-with file('asns.cPickle', 'w') as f:
+with file(('/'.join(sys.argv[0].split('/')[:-1] + ['']) if '/' in sys.argv[0] else '')
+         + 'asns.cPickle', 'w') as f:
 	cPickle.dump(asns, f)
-

@@ -123,7 +123,7 @@ int sort_dnsts(uint8_t *buf, size_t sz, const char *fn, int dodel)
 	if ((fd = open(fn, O_WRONLY|O_CREAT, 0644)) < 0) {
 		fprintf(stderr, "Could not open \"%s\": %s\n", fn, strerror(errno));
 	}
-	write(fd, wr_buf, sz);
+	assert(write(fd, wr_buf, sz) == sz);
 	close(fd);
 	free(wr_buf);
 
