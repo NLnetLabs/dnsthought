@@ -529,11 +529,24 @@ void process_not_ta_19036(dnst_rec *rec, uint8_t *msg, size_t msg_len)
 	&&  rr->rr_i.rr_type[12] ==  20 &&  rr->rr_i.rr_type[13] ==  17) {
 
 		rec->not_ta_19036 = CAP_DOES;
-		rec->has_ta_19036 = CAP_UNKNOWN;
+		rec->has_ta_19036 = rec->has_ta_20326 == CAP_DOES
+		                  ? CAP_DOESNT : CAP_UNKNOWN;
+#if 0
+		rec->has_ta_19036 =
+		    (  rec->has_ta_20326 == CAP_DOES     /* support */
+		    && rec->is_ta_19036  != CAP_DOESNT ) /* no contradiction */
+		    ?  CAP_DOESNT : CAP_UNKNOWN;
+#endif
 	} else {
 		rec->not_ta_19036 = CAP_DOESNT;
-		rec->has_ta_19036 = rec->dnskey_alg[5] == CAP_DOES
+		rec->has_ta_19036 = rec->has_ta_20326 == CAP_DOES
 		                  ? CAP_DOES : CAP_UNKNOWN;
+#if 0
+		rec->has_ta_19036 =
+		    (  rec->has_ta_20326 == CAP_DOES     /* support */
+		    && rec->is_ta_19036  != CAP_DOES )   /* no contradiction */
+		    ?  CAP_DOES   : CAP_UNKNOWN;
+#endif
 	}
 }
 
@@ -551,26 +564,15 @@ void process_not_ta_20326(dnst_rec *rec, uint8_t *msg, size_t msg_len)
 	&&  rr->rr_i.rr_type[10] == 145 &&  rr->rr_i.rr_type[11] ==  97
 	&&  rr->rr_i.rr_type[12] ==  20 &&  rr->rr_i.rr_type[13] ==  17) {
 
+
 		rec->not_ta_20326 = CAP_DOES;
-		rec->has_ta_20326 = rec->has_ta_19036 == CAP_DOES
-		                  ? CAP_DOESNT : CAP_UNKNOWN;
-#if 0
-		rec->has_ta_20326 =
-		    (  rec->has_ta_19036 == CAP_DOES     /* support */
-		    && rec->is_ta_20326  != CAP_DOESNT ) /* no contradiction */
-		    ?  CAP_DOESNT : CAP_UNKNOWN;
-#endif
+		rec->has_ta_20326 = CAP_UNKNOWN;
 	} else {
 		rec->not_ta_20326 = CAP_DOESNT;
-		rec->has_ta_20326 = rec->has_ta_19036 == CAP_DOES
+		rec->has_ta_20326 = rec->dnskey_alg[5] == CAP_DOES
 		                  ? CAP_DOES : CAP_UNKNOWN;
-#if 0
-		rec->has_ta_20326 =
-		    (  rec->has_ta_19036 == CAP_DOES     /* support */
-		    && rec->is_ta_20326  != CAP_DOES )   /* no contradiction */
-		    ?  CAP_DOES   : CAP_UNKNOWN;
-#endif
 	}
+
 }
 
 void process_is_ta_20326(dnst_rec *rec, uint8_t *msg, size_t msg_len)

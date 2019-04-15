@@ -25,7 +25,7 @@ do
 	cd ${DNSTHOUGHT_HOME}/$d
 	(
 		TO_MAKE=""
-		for f in `/usr/bin/find . -type f -name 201[78]-[0-9][0-9]-[0-9][0-9]`
+		for f in `/usr/bin/find . -type f -name 201[789]-[0-9][0-9]-[0-9][0-9]`
 		do
 			rm -f ${f}.dnst
 			TO_RM=${f%/*}
