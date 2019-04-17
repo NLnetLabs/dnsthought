@@ -140,6 +140,8 @@ typedef struct dnst_rec {
 
 	unsigned  is_ta_20326: 2;     /*     16430285 */
 
+	unsigned does_flagday: 2;     /*     19185448, 19256455 */
+
 	uint8_t         ecs_mask6   ; /*     inferred */
 
 	uint32_t asn_info;

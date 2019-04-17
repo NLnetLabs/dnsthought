@@ -203,6 +203,7 @@ void log_rec(dnst_rec *rec)
 	fprintf(out, ",%d", (int)rec->tcp_ipv6);
 	fprintf(out, ",%" PRIu8 ",%" PRIu8 ",%d",
 	    rec->ecs_mask, rec->ecs_mask6, (rec->ecs_mask || rec->ecs_mask6 ? 1 : 0));
+	fprintf(out, ",%d", rec->does_flagday == CAP_DOES   ? 1 : 0);
 	fprintf(out, ",%d", rec->qnamemin     == CAP_DOES   ? 1 : 0);
 	fprintf(out, ",%d", rec->qnamemin     == CAP_DOESNT ? 1 : 0);
 	for ( i = 0
@@ -243,7 +244,9 @@ void log_hdr(FILE *out)
 	             ",\"whoami.akamai.net A\""
 		     ",\"ripe-hackathon6.nlnetlabs.nl AAAA\",\"can_ipv6\""
 		     ",\"can_tcp\",\"cap_tcp6\",\"ecs_mask\",\"ecs_mask6\",\"does_ecs\""
-		     ",\"does_qnamemin\",\"doesnt_qnamemin\"");
+		     ",\"does_flagday\""
+		     ",\"does_qnamemin\",\"doesnt_qnamemin\""
+		     );
 	for ( i = 0
 	    ; i < sizeof(rec.hijacked) / sizeof(rec.hijacked[0])
 	    ; i++ )
@@ -639,6 +642,26 @@ void process_is_ta_20326(dnst_rec *rec, uint8_t *msg, size_t msg_len)
 #endif
 }
 
+void process_does_flagday(dnst_rec *rec, uint8_t *msg, size_t msg_len)
+{
+	rrset_spc   rrset_spc;
+	rrset      *rrset;
+	rrtype_iter rr_spc, *rr;
+
+	if (RCODE_WIRE(msg) == RCODE_NOERROR
+	&& (rrset = rrset_answer(&rrset_spc, msg, msg_len))
+	&&  rrset->rr_type == RRTYPE_A
+	&& (rr = rrtype_iter_init(&rr_spc, rrset))
+	&& (rr->rr_i.rr_type + 14 <= rr->rr_i.pkt_end)
+	&&  rr->rr_i.rr_type[10] == 145 &&  rr->rr_i.rr_type[11] ==  97
+	&&  rr->rr_i.rr_type[12] ==  20 &&  rr->rr_i.rr_type[13] ==  17) {
+
+		rec->does_flagday = CAP_DOESNT;
+	} else {
+		rec->does_flagday = CAP_DOES;
+	}
+}
+
 static int dnst_cmp(const void *x, const void *y)
 { return memcmp(x, y, sizeof(dnst_rec_key)); }
 static rbtree_type recs = { RBTREE_NULL, 0, dnst_cmp };
@@ -774,6 +797,10 @@ void process_dnst(dnst *d, unsigned int msm_id)
 	case 16430285: /* root-key-sentinel-is-ta-20326.d2a8n3.rootcanary.net A */
 		process_is_ta_20326(rec, dnst_msg(d), d->len);
 		break;
+	case 19185448: /* <random>.<prb_id>.<time>.flagday.rootcanary.net A */
+	case 19256455:
+		process_does_flagday(rec, dnst_msg(d), d->len);
+		break;
 	default:
 		fprintf(stderr, "Unknown msm_id: %u\n", msm_id);
 		return;
@@ -906,7 +933,7 @@ int main(int argc, const char **argv)
 			fprintf(stderr, "Could not open '%s'\n", res_fn);
 
 		else RBTREE_FOR(rec_node, dnst_rec_node *, &recs) {
-			assert(write(res_fd, &rec_node->rec, sizeof(dnst_rec) == sizeof(dnst_rec)));
+			write(res_fd, &rec_node->rec, sizeof(dnst_rec));
 		}
 		if (res_fd != -1)
 			close(res_fd);

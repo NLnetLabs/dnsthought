@@ -1,6 +1,6 @@
 AC_PREREQ([2.68])
 AC_INIT([dnst-processing], [0.1.0], [willem@nlnetlabs.nl])
-AM_INIT_AUTOMAKE
+AM_INIT_AUTOMAKE([subdir-objects])
 AC_CONFIG_SRCDIR([src/atlas2dnst.c])
 AC_CONFIG_HEADERS([config.h])
 

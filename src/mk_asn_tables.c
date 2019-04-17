@@ -442,7 +442,7 @@ int main(int argc, const char **argv)
 		fprintf(stderr, "Could not fstat \"%s\"\n", argv[1]);
 
 	else if ((rv = mmap( NULL, st.st_size
-	                   , PROT_WRITE, MAP_PRIVATE, fd, 0)) == MAP_FAILED)
+	                   , PROT_WRITE|PROT_READ, MAP_PRIVATE, fd, 0)) == MAP_FAILED)
 		fprintf(stderr, "Could not mmap \"%s\"\n", argv[1]);
 
 	else for (ln = rv, eor = rv + st.st_size; ln < eor;) {
