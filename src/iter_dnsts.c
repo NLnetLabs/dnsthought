@@ -81,7 +81,7 @@ dnst *dnst_iter_open(dnst_iter *i)
 		fprintf(stderr, "Filename parse error\n");
 
 	else if ((i->fd = open(fn, O_RDONLY)) < 0)
-		; /* fprintf(stderr, "Could not open \"%s\" (should pass silently)\n", fn); */
+		fprintf(stderr, "Could not open \"%s\" (should pass silently)\n", fn);
 
 	else if (fstat(i->fd, &st) < 0)
 		fprintf(stderr, "Could not fstat \"%s\"\n", fn);
@@ -922,6 +922,7 @@ int main(int argc, const char **argv)
 				dnst_iter_next(first);
 			}
 		} while (first);
+
 		for (i = 0; i < n_iters; i++)
 			dnst_iter_done(&iters[i]);
 		if (out) {

@@ -57,7 +57,7 @@ do
 	cd ${DNSTHOUGHT_HOME}/$d
 	(
 		TO_MAKE=""
-		for f in `/usr/bin/find . -type f -name 201[789]-[0-9][0-9]-[0-9][0-9]`
+		for f in `/usr/bin/find . -type f -name 20[12][7890]-[0-9][0-9]-[0-9][0-9]`
 		do
 			rm -f ${f}.dnst
 			TO_RM=${f%/*}
@@ -80,7 +80,7 @@ exit 0
 
 for d in atlas
 do
-	for f in `/usr/bin/find . -type f -name 201[78]-[0-9][0-9]-[0-9][0-9].dnst`
+	for f in `/usr/bin/find . -type f -name 20[12][7890]-[0-9][0-9]-[0-9][0-9].dnst`
 	do
 		check_mtime $f
 	done

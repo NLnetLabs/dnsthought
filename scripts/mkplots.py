@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 #
 ## Copyright (c) 2018, NLnet Labs. All rights reserved.
 ##
@@ -100,14 +100,15 @@ cap_names = \
 	, 'can_tcp'        : ( 2, 'can return over TCP')
 	, 'can_tcp6'       : ( 3, 'can return over TCP (to an IPv6 only nameserver)')
 	, 'does_ecs'       : ( 4, 'send an EDNS Client Subnet option')
-	, 'does_qnamemin'  : ( 5, 'do QNAME Minimization')
-	, 'doesnt_qnamemin': ( 5, 'do <b>not</b> do QNAME Minimization')
-	, 'does_nxdomain'  : ( 6, 'do NXDOMAIN Rewriting')
-	, 'doesnt_nxdomain': ( 6, 'do <b>not</b> do NXDOMAIN Rewriting')
-	, 'has_ta_19036'   : ( 7, 'have root KSK 19036 (and root KSK sentinel support)')
-	, 'hasnt_ta_19036' : ( 7, 'do <b>not</b> have root KSK 19036 (but <b>do</b> have root KSK sentinel support)')
-	, 'has_ta_20326'   : ( 8, 'have root KSK 20326 (and root KSK sentinel support)')
-	, 'hasnt_ta_20326' : ( 8, 'do <b>not</b> have root KSK 20326 (but <b>do</b> have root KSK sentinel support)')
+	, 'does_flagday'   : ( 5, 'Does not work around EDNS timeouts')
+	, 'does_qnamemin'  : ( 6, 'do QNAME Minimization')
+	, 'doesnt_qnamemin': ( 6, 'do <b>not</b> do QNAME Minimization')
+	, 'does_nxdomain'  : ( 7, 'do NXDOMAIN Rewriting')
+	, 'doesnt_nxdomain': ( 7, 'do <b>not</b> do NXDOMAIN Rewriting')
+	, 'has_ta_19036'   : ( 8, 'have root KSK 19036 (and root KSK sentinel support)')
+	, 'hasnt_ta_19036' : ( 8, 'do <b>not</b> have root KSK 19036 (but <b>do</b> have root KSK sentinel support)')
+	, 'has_ta_20326'   : ( 9, 'have root KSK 20326 (and root KSK sentinel support)')
+	, 'hasnt_ta_20326' : ( 9, 'do <b>not</b> have root KSK 20326 (but <b>do</b> have root KSK sentinel support)')
 	, 'can_rsamd5'     : (20, 'validate DNSKEY algorithm RSAMD5')
 	, 'cannot_rsamd5'  : (20, 'do <b>not</b> validate DNSKEY algorithm RSAMD5')
 	, 'broken_rsamd5'  : (20, 'have broken DNSKEY algorithm RSAMD5 validation support')
@@ -434,9 +435,15 @@ class Prop(object):
 		if unknown:
 			#labels += ['unknown']
 			colors += ['#CCCCCC']
+		if labels and labels[0].startswith('strict'):
+			labels = ['permissive resolvers'] + labels[1:]
 		i = 0
 		for label in labels:
-			plot_patches.append(mpatches.Patch(color = colors[i]))
+			try:
+				plot_patches.append(mpatches.Patch(color = colors[i]))
+			except IndexError:
+				if label.startswith('strict'):
+					plot_patches.append(mpatches.Patch(color = colors[0]))
 			i += 1
 
 		pct_labels = ['%s (%1.1f%%)' % (label, pct) for label, pct in zip(labels, [float(100*n) / float(sum(data)) for n in data])]
@@ -500,6 +507,9 @@ class Prop(object):
 				labels.append(label)
 				ax.plot(dt_ts, col_prbs, color = color)
 				i += 1
+		if labels and labels[0].startswith('strict'):
+			colors.insert(0, mpatches.Patch(color = '#CCCCCC'))
+			labels = ['permissive resolvers'] + labels[1:]
 		ax.legend( colors[::-1]
 			 , [label.decode('utf-8') for label in labels[::-1]]
 			 , ncol=1, loc='upper left')
@@ -535,6 +545,10 @@ class Prop(object):
 
 class DoesProp(Prop):
 	prop = [('does', 'do'), ('doesnt', 'do not do')]
+
+class FlagDay(DoesProp):
+	def labs(self):
+		return [ 'strict resolvers', 'strict resolvers' ]
 
 class HasProp(Prop):
 	prop = [('has', 'have'), ('hasnt', 'do not have ')]
@@ -830,9 +844,8 @@ def create_plots(fn):
 		, TopASNs   ('resolver')
 		, TopASNs   ('probe')
 		, DoesProp  ('Qname Minimization', 'qnamemin' , 'qnamemin'   , 2)
-#, DoesProp  ('ENDS Client Subnet', 'ecs'      , 'EDNS Client Subnet', 1)
+		, FlagDay   ('Flagday', 'flagday' , 'flagday', 1)
 		, TopECSMasks()
-#, TopECSMasks(6)
 		, TopASNs   ('nxhj')
 	        , TAProp()
 		, DNSKEYProp('ed448'    , 'ED448')

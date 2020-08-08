@@ -165,6 +165,8 @@ static uint8_t cd_get_tcp(dnst_rec *rec)          { return rec->tcp_ipv4; }
 static uint8_t cd_get_tcp6(dnst_rec *rec)         { return rec->tcp_ipv6; }
 static uint8_t cd_get_ecs(dnst_rec *rec)
 { return (rec->ecs_mask || rec->ecs_mask6) ? CAP_DOES : CAP_UNKNOWN; }
+static uint8_t cd_get_flagday(dnst_rec *rec)
+{ return rec->does_flagday == CAP_DOES ? CAP_DOES : CAP_UNKNOWN; }
 static uint8_t cd_get_internal(dnst_rec *rec)
 {
 	int Z_asn1 = -1, Z_asn2 = -1, Z_asn6 = -1;
@@ -230,6 +232,7 @@ static const cap_descr caps[] = {
     { 2, { "can_tcp"      } , cd_get_tcp        },
     { 2, { "can_tcp6"     } , cd_get_tcp6       },
     { 2, { "does_ecs"     } , cd_get_ecs        },
+    { 2, { "does_flagday" } , cd_get_flagday    },
     { 3, { "does_qnamemin", "doesnt_qnamemin" } , cd_get_qnamemin     },
     { 3, { "does_nxdomain", "doesnt_nxdomain" } , cd_get_nxdomain     },
     { 3, { "has_ta_19036" , "hasnt_ta_19036"  } , cd_get_has_ta_19036 },
@@ -396,6 +399,7 @@ void count_cap(cap_counter *cap, dnst_rec *rec)
 		cap->res.dnskey_alg[i][rec->dnskey_alg[i]]++;
 	for (i = 0; i < 2; i++)
 		cap->res.ds_alg[i][rec->ds_alg[i]]++;
+	cap->res.does_flagday[rec->does_flagday]++;
 	cap->res.qnamemin[rec->qnamemin]++;
 	cap->res.tcp_ipv4[rec->tcp_ipv4]++;
 	cap->res.tcp_ipv6[rec->tcp_ipv6]++;
